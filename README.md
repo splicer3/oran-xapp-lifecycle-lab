@@ -226,6 +226,7 @@ For failures, start with `docs/troubleshooting.md`, then use `docs/e2sim-customi
 ├── AGENTS.md
 ├── CITATION.cff
 ├── LICENSE
+├── LICENSE_DECISION.md
 ├── Makefile
 ├── SECURITY.md
 └── THIRD_PARTY.md
@@ -250,6 +251,6 @@ Use `CITATION.cff` if you need citation metadata for the repository. The sample 
 
 ## License And Third-Party Notes
 
-Repository code and documentation are released under the MIT license in `LICENSE`.
+Original repository code and documentation are released under the MIT license in `LICENSE`. The license does not apply to third-party projects, images, manifests, charts, or packages installed or downloaded by the automation.
 
-The automation installs or interacts with third-party projects including O-RAN SC RIC components, K3s, Istio, Prometheus, Grafana, Kiali, Helm, ChartMuseum, Docker, Vagrant, VirtualBox, Ansible collections, and Plotly. See `THIRD_PARTY.md` for the maintained list and review upstream licenses before redistributing modified third-party source or images.
+The automation installs or interacts with third-party projects including O-RAN SC RIC components, K3s, Istio, Prometheus, Grafana, Kiali, Helm, ChartMuseum, Docker, Vagrant, VirtualBox, Ansible collections, and Plotly. See `THIRD_PARTY.md` and `LICENSE_DECISION.md` for the maintained notes and review upstream licenses before redistributing modified third-party source or images.

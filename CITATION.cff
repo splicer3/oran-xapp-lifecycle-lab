@@ -1,16 +1,19 @@
 cff-version: 1.2.0
 message: "If you use this repository, cite it as software."
-title: "oran-xapp-lifecycle-lab"
+title: "oran-xapp-lifecycle-lab: O-RAN Near-RT RIC xApp Lifecycle Automation Testbed"
 type: software
 authors:
   - name: "splicer3"
 repository-code: "https://github.com/splicer3/oran-xapp-lifecycle-lab"
-abstract: "Ansible-based O-RAN Near-RT RIC xApp lifecycle lab with K3s, Istio traffic steering, e2sim, KPI MON deployment, and validation steps."
+abstract: "Curated public engineering release of a bachelor thesis project for an Ansible-driven O-RAN Near-RT RIC xApp lifecycle testbed with K3s, OSC Near-RT RIC deployment, e2sim input, kpimon-go testing, Istio traffic steering, and observability."
 keywords:
-  - O-RAN
-  - Near-RT RIC
-  - xApp
-  - Ansible
-  - K3s
-  - Istio
+  - "O-RAN"
+  - "Near-RT RIC"
+  - "xApp"
+  - "Ansible"
+  - "K3s"
+  - "Istio"
+  - "E2Sim"
+  - "kpimon-go"
+  - "observability"
 license: MIT

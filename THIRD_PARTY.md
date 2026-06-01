@@ -1,28 +1,47 @@
 # Third-Party Components
 
-This repository contains automation that installs or interacts with third-party projects. Their source code is not vendored here unless explicitly present in a role template or sample file.
+This repository is primarily project-authored automation, documentation, templates, scripts, and small sample outputs. It installs, downloads, clones, or interacts with several third-party projects at runtime.
 
-Referenced components include:
+The root `LICENSE` applies only to original material in this repository. It does not license third-party projects, Docker images, upstream Git repositories, downloaded manifests, Helm charts, VM boxes, or generated artifacts.
 
-- O-RAN SC `ric-plt-ric-dep`
-- O-RAN SC `ric-plt-appmgr`
-- K3s
-- Istio and Istio sample addons
-- Prometheus, Grafana, and Kiali through Istio sample addons
-- Helm
-- ChartMuseum
-- ingress-nginx
-- Docker
-- Vagrant and VirtualBox for the optional local demo
-- Ansible collections: `kubernetes.core`, `community.docker`, `community.general`, `ansible.posix`
-- Python Plotly for local HTML chart rendering
+Licenses below are listed only when they are declared in files committed to this repository. When the local files do not declare a license, the entry is marked as requiring upstream review.
 
-Docker images referenced by defaults:
+| Component | Purpose in this repository | Upstream URL or local evidence | License evidence in this repo | Notes / uncertainties |
+| --- | --- | --- | --- | --- |
+| O-RAN SC `ric-plt-ric-dep` | Deploys OSC Near-RT RIC J-release components. | `https://github.com/o-ran-sc/ric-plt-ric-dep.git` in `ansible/ric-lifecycle/group_vars/all.yml`. | Not declared in this repo. | Cloned on the target VM. Review upstream license and release branch before redistributing modified source or generated charts. |
+| O-RAN SC `ric-plt-appmgr` / `dms_cli` | Provides xApp onboarding CLI used by the `kpimon-go` role. | `https://github.com/o-ran-sc/ric-plt-appmgr.git` in `ansible/ric-lifecycle/group_vars/all.yml`. | Not declared in this repo. | Cloned on the target VM. Review upstream license and Python dependency licenses before redistributing modifications. |
+| OSC Near-RT RIC runtime components | Runtime platform for E2Term, Subscription Manager, AppMgr, routing, and related RIC services. | Installed indirectly by `ric-plt-ric-dep`. | Not declared in this repo. | Runtime components are not vendored here. Their licenses and notices belong to upstream O-RAN SC projects. |
+| `splicer3/kpi-mon-xapp:1.0.1` Docker image | Default `kpimon-go` xApp image used by lifecycle and A/B workflows. | Image references in `ansible/ric-lifecycle/group_vars/all.yml`, `ansible/istio-ab-testing/group_vars/all.yml`, and the xApp descriptor template. | Not declared in this repo. | Image provenance, source license, and any O-RAN SC-derived code require manual review before publishing derived images or results. |
+| `splicer3/e2sim:latest` Docker image | E2 simulator used to generate E2SM-KPM traffic. | `e2sim_image` in `ansible/ric-lifecycle/group_vars/all.yml`. | Not declared in this repo. | The image tag is mutable and the E2Sim source fork is not included. Pin and review image provenance for reproducible work. |
+| K3s | Single-node Kubernetes distribution for the main RIC testbed and optional demo. | `https://get.k3s.io` in K3s roles. | Not declared in this repo. | Install script is downloaded at runtime. Review K3s upstream license and install script terms. |
+| Helm | Helm CLI used for RIC and xApp chart operations. | `https://get.helm.sh` in `ansible/ric-lifecycle/group_vars/all.yml`. | Not declared in this repo. | Helm binary is downloaded on the target VM when needed. |
+| Istio | Service mesh, sidecar injection, TCP routing, and observability integration. | `https://github.com/istio/istio/releases/download` in `ansible/ric-lifecycle/group_vars/all.yml`. | Not declared in this repo. | `istioctl` and sample addon manifests are downloaded at runtime. Review upstream Istio notices. |
+| Istio sample add-ons: Prometheus, Grafana, Kiali | Observability stack installed when `istio_install_addons=true`. | Raw Istio addon URLs in `ansible/ric-lifecycle/group_vars/all.yml`; optional docs also reference Istio sample add-ons. | Not declared in this repo. | Add-on manifests are not committed; they are downloaded from Istio release branches at runtime. Review each upstream project license. |
+| Prometheus | Metrics API queried by A/B and rate-limit workflows. | `prometheus_url` variables and Istio addon references. | Not declared in this repo. | Used as deployed runtime service; not vendored here. |
+| Grafana | Dashboard UI installed through Istio sample add-ons. | Istio addon references. | Not declared in this repo. | Used as deployed runtime service; not vendored here. |
+| Kiali | Mesh topology UI installed through Istio sample add-ons. | Istio addon references. | Not declared in this repo. | Used as deployed runtime service; not vendored here. |
+| ChartMuseum image `ghcr.io/helm/chartmuseum:v0.14.0` | Local Helm chart repository for RIC common charts and xApp charts. | Image references in `ansible/ric-lifecycle/group_vars/all.yml`. | Not declared in this repo. | Container image is pulled at runtime. Review image and upstream project license before redistribution. |
+| Docker / Docker Engine packages | Container runtime for ChartMuseum and e2sim on the target VM. | Package names `docker.io`, `docker-ce`, `docker-ce-cli`, `containerd.io` in `ansible/ric-lifecycle/group_vars/all.yml`. | Not declared in this repo. | Installed from OS/package repositories; package licensing depends on the target distribution and repository. |
+| ingress-nginx | Optional HTTP demo ingress controller. | `https://kubernetes.github.io/ingress-nginx` in `ansible/istio-rate-limit-demo/inventory/group_vars/all/all.yaml`. | Not declared in this repo. | Used only by the optional rate-limit demo. Helm chart and controller are not vendored. |
+| `nginx:alpine` Docker image | Optional demo HTTP workload. | Image reference in `ansible/istio-rate-limit-demo/roles/demo-nginx/templates/deploy.yaml.j2`. | Not declared in this repo. | Pulled at runtime. Review image notices before redistribution. |
+| `alpine:3.19` Docker image | Optional demo helper container. | Image reference in `ansible/istio-rate-limit-demo/roles/demo-nginx/templates/deploy.yaml.j2`. | Not declared in this repo. | Pulled at runtime. Review image notices before redistribution. |
+| Vagrant | Optional two-VM K3s demo orchestration. | Vagrantfile template and optional demo README. | Not declared in this repo. | Used only by `ansible/istio-rate-limit-demo`. |
+| VirtualBox | Optional VM provider for the rate-limit demo. | Vagrantfile template and optional demo README. | Not declared in this repo. | Installation and licensing are outside this repository. |
+| Vagrant box `hashicorp-education/ubuntu-24-04` | Base VM image for the optional demo. | `vagrant_box` in `ansible/istio-rate-limit-demo/inventory/group_vars/all/all.yaml`. | Not declared in this repo. | Box terms and base OS notices require upstream review. |
+| `vagrant-disksize` plugin | Optional disk resizing in the generated Vagrantfile. | `Vagrant.has_plugin?("vagrant-disksize")` in `ansible/istio-rate-limit-demo/roles/vagrant-vms/templates/Vagrantfile.j2`. | Not declared in this repo. | Optional plugin; not installed by this repository. |
+| Ansible collection `kubernetes.core` | Kubernetes and Helm module support. | `ansible/ric-lifecycle/collections/requirements.yml` and `ansible/istio-rate-limit-demo/collections/requirements.yaml`. | Not declared in this repo. | Installed through `ansible-galaxy`; review collection metadata upstream. |
+| Ansible collection `community.docker` | Docker container management modules. | `ansible/ric-lifecycle/collections/requirements.yml`. | Not declared in this repo. | Installed through `ansible-galaxy`; review collection metadata upstream. |
+| Ansible collection `community.general` | Optional demo support such as UFW-related modules. | `ansible/istio-rate-limit-demo/collections/requirements.yaml`. | Not declared in this repo. | Installed through `ansible-galaxy`; review collection metadata upstream. |
+| Ansible collection `ansible.posix` | Optional demo POSIX/sysctl support. | `ansible/istio-rate-limit-demo/collections/requirements.yaml`. | Not declared in this repo. | Installed through `ansible-galaxy`; review collection metadata upstream. |
+| Python package `ansible-core` | CI and local Ansible execution. | `.github/workflows/ci.yml`. | Not declared in this repo. | Installed in CI with `pip`; review package metadata upstream. |
+| Python package `plotly` | Optional HTML chart rendering for A/B and rate-limit scripts. | `.github/workflows/ci.yml`; script imports. | Not declared in this repo. | Required only for HTML output. |
+| Python notebook packages: Jupyter, ipykernel, pandas, NumPy, SciPy, statsmodels, Plotly | Statistical notebook execution. | Required package list in `experiments/time-based-switching/ab_statistical_validation.ipynb`. | Not declared in this repo. | Notebook is not part of the Ansible run path. Review package metadata upstream. |
+| GitHub Actions `actions/checkout@v4` and `actions/setup-python@v5` | CI checkout and Python setup. | `.github/workflows/ci.yml`. | Not declared in this repo. | Used by GitHub-hosted CI; review action repositories and licenses upstream. |
+| Deadsnakes PPA | Optional Python 3.9 source for `dms_cli` compatibility on Ubuntu targets. | `ppa:deadsnakes/ppa` in `ansible/ric-lifecycle/roles/xapp_kpimon_deploy/tasks/main.yml`. | Not declared in this repo. | Package provenance depends on the target system and PPA. |
+| JSON Schema draft-07 reference | Schema metadata for the xApp descriptor schema file. | `http://json-schema.org/draft-07/schema` in `ansible/ric-lifecycle/roles/xapp_kpimon_deploy/tasks/files/schema.json`. | Not declared in this repo. | Reference URL only; not a vendored dependency. |
 
-- `splicer3/kpi-mon-xapp:1.0.1`
-- `splicer3/e2sim:latest`
-- `ghcr.io/helm/chartmuseum:v0.14.0`
-- `nginx:alpine`
-- `alpine:3.19`
+## Local Templates And Generated Files
 
-Review upstream licenses before redistributing modified third-party source or publishing derived images.
+Kubernetes, Istio, EnvoyFilter, Vagrantfile, and xApp descriptor templates committed in this repository are maintained as part of this public release unless an upstream notice is present. No upstream license headers were found in committed source files during the local scan for this update.
+
+Generated files under `artifacts/`, kubeconfigs, downloaded manifests, chart archives, packet captures, and large logs are intentionally ignored or excluded from the public repository.

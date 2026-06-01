@@ -31,8 +31,8 @@ These notes record what was copied from the local thesis mirror and what still n
 
 ## Manual Review Before Publishing
 
-- Review the provisional repository license before public release.
-- Review `THIRD_PARTY.md` for O-RAN SC, Istio, K3s, Helm, ChartMuseum, ingress-nginx, Vagrant, VirtualBox, Plotly, and Ansible collections.
+- Review `LICENSE_DECISION.md` before the first tagged release.
+- Review `THIRD_PARTY.md` for O-RAN SC, Istio, K3s, Helm, ChartMuseum, ingress-nginx, Vagrant, VirtualBox, Plotly, Python notebook packages, Docker images, and Ansible collections.
 - Decide whether the optional rate-limit demo should remain in the first public release or move to a later example branch.
 - Re-check Docker image provenance for `splicer3/kpi-mon-xapp:1.0.1` and `splicer3/e2sim:latest`.
 - Run syntax checks after installing required Ansible collections.
