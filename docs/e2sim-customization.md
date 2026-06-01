@@ -1,6 +1,6 @@
 # e2sim Customization
 
-This repository uses e2sim as a controllable E2 traffic source for the Near-RT RIC lab. The public release contains the Ansible integration for running e2sim and configuring its runtime parameters; it does not include the E2Sim C++ source fork, packet captures, or raw thesis logs.
+This repository uses e2sim as a controllable E2 traffic source for the Near-RT RIC lab. It contains the Ansible integration for running e2sim and configuring its runtime parameters; it does not include the E2Sim C++ source fork, packet captures, or raw thesis logs.
 
 ## Role In This Repository
 
@@ -13,19 +13,19 @@ The integration point is:
 - `ansible/ric-lifecycle/site.yml`
 - `ansible/ric-lifecycle/playbooks/validate.yml`
 
-In the default public configuration, `e2sim_mode` is `fully-functional`, so `site.yml` starts the e2sim container after the RIC deployment and optional E2Term exposure, then deploys `kpimon-go`.
+In the default configuration, `e2sim_mode` is `fully-functional`, so `site.yml` starts the e2sim container after the RIC deployment and optional E2Term exposure, then deploys `kpimon-go`.
 
 ## Why A Simulator Was Used
 
-The lab is meant to make xApp lifecycle tests repeatable. A simulator keeps the input side controlled: the RIC can receive E2 setup and E2SM-KPM indications without requiring RF hardware, a 5G core, UE state, or a full OAI-gNB deployment.
+The lab is meant to make xApp lifecycle tests repeatable. A simulator keeps the input side controlled: the RIC can receive E2 setup and E2SM-KPM indications without RF hardware, a 5G core, UE state, or a full OAI-gNB deployment.
 
-The thesis work attempted a fuller OAI-gNB path, but that path introduced extra variables around container privileges, virtual network interfaces, E2 agent behavior, Service Model compatibility, and startup ordering. Those details are valid research work, but they are not required for this public repository's main goal: deploy the RIC, run `kpimon-go`, generate repeatable KPM-like input, and study the xApp traffic path.
+The thesis work attempted a fuller OAI-gNB path, but that path introduced extra variables around container privileges, virtual network interfaces, E2 agent behavior, Service Model compatibility, and startup ordering. Those details are valid research work, but they are not required for this repository's goal: deploy the RIC, run `kpimon-go`, generate repeatable KPM-like input, and study the xApp traffic path.
 
 ## What Was Customized
 
-The public repo exposes the customization through runtime variables and a referenced container image. It does not contain the simulator source diff.
+The repository exposes the customization through runtime variables and a referenced container image. It does not contain the simulator source diff.
 
-| Item | Status in this public release | Repo evidence |
+| Item | Status in this repository | Repo evidence |
 | --- | --- | --- |
 | Continuous dataset looping | Background from the thesis. The source code implementing the loop is not included here. Use only if the selected e2sim image is known to contain that behavior. | No E2Sim source files are present in this repository. |
 | Configurable send frequency | Exposed through environment variables passed to the container. The current defaults are `REPORTS_RESTART_SLEEP_MS: "50"` and `REPORTS_SEND_GAP_MS: "50"`. | `ansible/ric-lifecycle/group_vars/all.yml` and `ansible/ric-lifecycle/roles/e2sim_docker/tasks/main.yml` |
@@ -55,7 +55,7 @@ The `kpimon-go` descriptor rendered by this repo declares:
 - received message types: `RIC_SUB_RESP`, `RIC_INDICATION`
 - transmitted message type: `RIC_SUB_REQ`
 
-The E2/SCTP leg and the RMR/TCP leg have different observability behavior. SCTP between e2sim and E2Term is not natively visible through Istio/Envoy sidecars. RMR/TCP traffic to `kpimon-go` can be observed through Istio metrics when the relevant workloads are sidecar-injected and traffic passes through Envoy.
+The E2/SCTP leg and the RMR/TCP leg have different observability behavior. SCTP between e2sim and E2Term is not natively visible through Istio/Envoy sidecars. RMR/TCP traffic to `kpimon-go` can be observed through Istio metrics when the relevant workloads are sidecar-injected and traffic passes through Envoy. See [observability.md](observability.md) for the telemetry boundary.
 
 ## Deploying e2sim With Existing Files
 
@@ -109,7 +109,7 @@ ansible-playbook playbooks/validate.yml -i /tmp/ric-lifecycle-hosts.ini -K -e e2
 
 This validates that the RIC namespaces exist, RIC pods are healthy, Istio state matches the configured mode, `kpimon-go` is deployed with the expected image, and the e2sim container is running in `fully-functional` mode. If `ric_e2term_expose_enabled=true`, it also validates that the SCTP NodePort service exists with the expected mapping.
 
-For traffic flow, use layered checks. The exact log messages depend on the selected images and RIC release, so treat these as manual diagnostics rather than scripted pass/fail tests.
+For traffic flow, use layered checks. The exact log messages depend on the selected images and RIC release, so treat these as manual diagnostics, not scripted pass/fail tests.
 
 On the target VM, check the simulator container:
 
@@ -146,7 +146,7 @@ A non-zero RMR/TCP rate is an indirect signal that traffic is reaching the xApp 
 
 ## Background
 
-The thesis work describes an E2Sim fork that added continuous dataset looping and runtime-controlled send timing. It also describes OAI-gNB integration attempts and SCTP packet-capture validation. Those items are useful context, but only the curated automation and small public artifacts are kept here.
+The thesis work describes an E2Sim fork that added continuous dataset looping and runtime-controlled send timing. It also describes OAI-gNB integration attempts and SCTP packet-capture validation. Those items are background only; this repository keeps the automation and small public artifacts needed to understand the lab.
 
 ## Not Included In This Public Release
 

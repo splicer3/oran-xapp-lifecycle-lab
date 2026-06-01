@@ -1,6 +1,6 @@
 # Architecture
 
-This repository describes a single-VM O-RAN Near-RT RIC lab used for xApp lifecycle automation and traffic-switching experiments. The system is best read as three planes:
+This repository describes a single-VM O-RAN Near-RT RIC lab for xApp lifecycle automation and traffic-switching experiments. The system has three main planes:
 
 - **Orchestration Plane**: Ansible playbooks, roles, templates, validation tasks, and local result-processing scripts.
 - **Execution Substrate**: the Linux VM, K3s, Docker, Istio, RIC platform namespaces, and observability services that host the lab.
@@ -93,7 +93,7 @@ The Ansible controller reaches the target VM over SSH. Tasks install system pack
 
 In `fully-functional` mode, `e2sim_docker` starts the configured e2sim image with host networking and environment variables such as `RAN_FUNC_ID`, `REPORTS_RESTART_SLEEP_MS`, and `REPORTS_SEND_GAP_MS`. The simulator sends E2AP/E2SM-KPM traffic over SCTP toward E2Term. If `ric_e2term_expose_enabled` is true, the lab creates an SCTP NodePort service named by `ric_e2term_nodeport_service_name`; the default mapping is NodePort `32222` to target port `36422`.
 
-After E2Term receives E2 traffic, KPI messages relevant to `kpimon-go` move inside the RIC/xApp environment through RMR over TCP. The `kpimon-go` descriptor declares RMR on `tcp:4560`, with port `4560` used for RMR data and port `4561` used for RMR route traffic.
+After E2Term receives E2 traffic, KPI messages relevant to `kpimon-go` move inside the RIC/xApp environment through RMR over TCP. The `kpimon-go` descriptor declares RMR on `tcp:4560`; port `4560` is used for RMR data and port `4561` is used for RMR route traffic.
 
 ### Time-Based Switching Flow
 
@@ -108,7 +108,7 @@ The A/B workflow scales or prepares `kpimon-go` variants with `version` labels `
 | xApp HTTP health | `kpimon-go` container port `8080` | Partly, depending on sidecar injection and traffic path | The descriptor includes HTTP liveness and readiness probes. |
 | Kubernetes control traffic | Ansible, K3s API, Helm, and RIC install scripts | Not the focus of Istio telemetry | This is provisioning and validation traffic, not experiment payload traffic. |
 
-Prometheus, Grafana, and Kiali are useful for sidecar-observed TCP service behavior, workload health, and mesh topology. They do not make SCTP/E2AP payloads visible, and they do not replace RIC-specific or SCTP-specific debugging tools.
+Prometheus, Grafana, and Kiali are useful for sidecar-observed TCP service behavior, workload health, and mesh topology. They do not make SCTP/E2AP payloads visible, and they do not replace RIC-specific or SCTP-specific debugging tools. For operational checks, see [observability.md](observability.md) and [troubleshooting.md](troubleshooting.md).
 
 ## Known Constraints
 

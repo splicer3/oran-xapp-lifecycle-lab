@@ -1,6 +1,6 @@
 # Observability
 
-This testbed uses Istio telemetry and the Istio sample add-ons to observe mesh-enabled workloads. The useful boundary is precise: HTTP and TCP traffic that passes through Envoy sidecars can be measured and visualized; SCTP traffic on the E2 interface is not natively visible through Istio in this repository.
+This testbed uses Istio telemetry and the Istio sample add-ons to observe mesh-enabled workloads. The boundary matters: HTTP and TCP traffic that passes through Envoy sidecars can be measured and visualized; SCTP traffic on the E2 interface is not natively visible through Istio in this repository.
 
 ## Installed Add-ons
 
@@ -36,7 +36,7 @@ Relevant files:
 - `ansible/istio-rate-limit-demo/roles/export_throughput_csv/tasks/series.yaml`
 - `ansible/istio-rate-limit-demo/scripts/plot_rate_limit.py`
 
-This part is useful for checking basic HTTP telemetry, EnvoyFilter behavior, and Prometheus query/export mechanics. It is separate from the Near-RT RIC lifecycle workflow.
+This part checks basic HTTP telemetry, EnvoyFilter behavior, and Prometheus query/export mechanics. It is separate from the Near-RT RIC lifecycle workflow.
 
 ### TCP/RMR Traffic
 
@@ -76,7 +76,7 @@ Relevant files:
 
 ### E2Sim To E2Term Visibility
 
-Prometheus and Kiali can help infer that E2 input is affecting the xApp path when RMR/TCP traffic increases. They cannot prove SCTP handshake success, ASN.1 payload correctness, or E2SM-KPM compatibility. Those require E2/SCTP-aware diagnostics outside the mesh.
+Prometheus and Kiali can help infer that E2 input is affecting the xApp path when RMR/TCP traffic increases. They cannot prove SCTP handshake success, ASN.1 payload correctness, or E2SM-KPM compatibility. Those checks require E2/SCTP-aware diagnostics outside the mesh.
 
 This public release does not include tcpdump scripts, diagnostic-container manifests, `.pcap` files, or sanitized packet captures. Keep any local packet captures out of the repository unless they are deliberately sanitized and reviewed.
 
@@ -93,7 +93,7 @@ For the RMR/TCP layer, the same query shape used by the A/B workflow can be run 
 curl 'http://localhost:9090/api/v1/query?query=sum(rate(istio_tcp_received_bytes_total{destination_workload_namespace="ricxapp",reporter="destination",destination_service="service-ricxapp-kpimon-go-rmr.ricxapp.svc.cluster.local"}[30s]))'
 ```
 
-A non-zero value is an indirect signal that TCP traffic is reaching the xApp service path. It is not proof of SCTP/E2 correctness.
+A non-zero value is an indirect signal that TCP traffic is reaching the xApp service path. It is not proof of SCTP/E2 correctness. For common failure modes, see [troubleshooting.md](troubleshooting.md).
 
 ## Accessing Dashboards
 

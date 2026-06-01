@@ -1,6 +1,6 @@
 # Design Decisions
 
-This repository is a curated engineering release of a bachelor thesis lab. The design choices below describe why the public testbed is built around a single-VM K3s environment, Ansible automation, e2sim-generated E2SM-KPM traffic, Istio TCP routing, and Time-Based Switching.
+This repository publishes the engineering parts of a bachelor thesis lab. The design choices below explain why the testbed uses a single-VM K3s environment, Ansible automation, e2sim-generated E2SM-KPM traffic, Istio TCP routing, and Time-Based Switching.
 
 ## k3s For The Kubernetes Substrate
 
@@ -23,7 +23,7 @@ Ansible was used because the lab spans several layers that need strict ordering:
 - optional E2Term exposure and e2sim startup
 - post-deployment validation
 
-This is not only a Kubernetes manifest problem. Some steps run on the host, some use Docker, some clone upstream repositories, and some apply Kubernetes resources. Ansible keeps those steps in one readable control path while still allowing variables, role-level templates, and syntax checks.
+This is not only a Kubernetes manifest problem. Some steps run on the host, some use Docker, some clone upstream repositories, and some apply Kubernetes resources. Ansible keeps those steps in one control path while still allowing variables, role-level templates, and syntax checks.
 
 The trade-off is that long-running external installers and upstream scripts are only partly idempotent from the lab's point of view. The playbooks include checks and validation, but they still depend on network access, image availability, upstream repository state, and the target VM's package environment.
 
@@ -31,9 +31,9 @@ The trade-off is that long-running external installers and upstream scripts are 
 
 The project needed sustained E2SM-KPM input to test RIC deployment, xApp onboarding, observability, and xApp traffic switching. e2sim was a better fit for that goal than making the public lab depend on a full OAI-gNB path.
 
-A full OAI-gNB route brings more variables into the experiment: radio-stack configuration, RF or SDR assumptions, UE/core-network dependencies, E2 agent integration details, timing behavior, and container or host compatibility. Those are valid research topics, but they were not required to evaluate the xApp lifecycle workflow in this repository.
+A full OAI-gNB route brings more variables into the experiment: radio-stack configuration, RF or SDR assumptions, UE/core-network dependencies, E2 agent integration details, timing behavior, and container or host compatibility. Those are valid research topics, but they were outside the scope of this xApp lifecycle workflow.
 
-e2sim narrows the input side to a controllable E2 simulator. In this lab it is started as a Docker container, uses host networking by default, and can be configured through variables such as `e2sim_image`, `e2sim_container_command`, and `e2sim_env`. The kept automation documents how the simulator is connected to the RIC path; it does not claim that simulator traffic has the same fidelity as a real gNB.
+e2sim narrows the input side to a controllable E2 simulator. In this lab it is started as a Docker container, uses host networking by default, and can be configured through variables such as `e2sim_image`, `e2sim_container_command`, and `e2sim_env`. The automation documents how the simulator connects to the RIC path; it does not claim that simulator traffic has the same fidelity as a real gNB.
 
 ## Istio Despite SCTP Limitations
 
@@ -47,7 +47,7 @@ The limitation is explicit: SCTP/E2 traffic is not natively visible through Envo
 
 The experiment used Time-Based Switching because the traffic under test is not a set of short independent HTTP requests. RMR and E2-related paths include persistent or session-oriented connections, so static percentage-based traffic splitting can be hard to interpret: a configured percentage does not necessarily translate into an immediate or stable split of observed traffic.
 
-The implemented workflow alternates between full routing states, typically `100/0` and `0/100`, for fixed time windows. That produces clearer Prometheus windows for comparing destination versions and makes flip events explicit in the generated metadata and plots.
+The implemented workflow alternates between full routing states, typically `100/0` and `0/100`, for fixed time windows. That produces clearer Prometheus windows for comparing destination versions and records each flip in the generated metadata and plots.
 
 This choice matches the thesis observation that throughput continuity can be preserved while switching, but convergence latency remains the main bottleneck. The experiment measures how traffic moves after a routing update; it does not promise instant migration.
 

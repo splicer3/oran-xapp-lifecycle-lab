@@ -1,18 +1,18 @@
 # oran-xapp-lifecycle-lab
 
-`oran-xapp-lifecycle-lab` is a curated O-RAN Near-RT RIC xApp lifecycle automation testbed. It uses Ansible to build a single-VM K3s environment, deploy the O-RAN Software Community Near-RT RIC, install a `kpimon-go` xApp, run a customized e2sim workload for sustained E2SM-KPM traffic, and evaluate xApp traffic switching with Istio, Prometheus, Grafana, and Kiali.
+`oran-xapp-lifecycle-lab` is an O-RAN Near-RT RIC xApp lifecycle testbed. It uses Ansible to build a single-VM K3s lab, deploy the O-RAN Software Community Near-RT RIC, install `kpimon-go`, run e2sim E2SM-KPM input, and evaluate xApp traffic switching with Istio, Prometheus, Grafana, and Kiali.
 
 ## What This Repository Contains
 
 - `ansible/ric-lifecycle`: the main Infrastructure as Code workflow for K3s, Docker, Istio, OSC Near-RT RIC, optional E2Term exposure, e2sim, KPI MON xApp onboarding, and validation.
 - `ansible/istio-ab-testing`: the Time-Based Switching experiment for `kpimon-go` A/B traffic testing with Istio TCP routing and Prometheus metrics collection.
 - `ansible/istio-rate-limit-demo`: an optional K3s/NGINX/Istio demo used to exercise local rate limiting and observability mechanics.
-- `docs`: architecture notes, design decisions, observability notes, e2sim customization notes, switching details, and troubleshooting guidance.
-- `experiments/time-based-switching`: the notebook used with the curated A/B switching samples.
+- `docs`: architecture, design decisions, observability notes, e2sim details, switching methodology, and troubleshooting guidance.
+- `experiments/time-based-switching`: the notebook used to analyze the A/B switching samples.
 - `results/sample`: small CSV and Markdown samples kept for script validation and artifact format reference.
 - `k8s`: pointers to Kubernetes and Istio manifests that are rendered by Ansible roles.
 
-This is not a thesis dump. Private inventories, kubeconfigs, packet captures, large generated logs, report PDFs, and personal material are intentionally excluded.
+This repository is not a thesis archive. Private inventories, kubeconfigs, packet captures, large generated logs, report PDFs, and personal material are intentionally excluded.
 
 ## Architecture Summary
 
@@ -55,7 +55,7 @@ A small root Makefile exposes safe local checks. Deployment entry points remain 
 
 ### Local Sanity Checks
 
-These commands do not modify a VM. They were run as part of this public-release pass.
+These commands do not modify a VM.
 
 ```bash
 make check-prereqs
@@ -87,7 +87,7 @@ The A/B syntax check currently emits an Ansible warning about the variable name 
 
 ### Minimal Path: RIC Platform Without E2Sim
 
-This path changes the target VM and prompts for sudo with `-K`. It deploys K3s, Docker, Istio, OSC Near-RT RIC, and `kpimon-go`, but does not require the `e2sim` container to be running. Not tested in this pass because it requires a real lab VM.
+This path changes the target VM and prompts for sudo with `-K`. It deploys K3s, Docker, Istio, OSC Near-RT RIC, and `kpimon-go`, but does not require the `e2sim` container to be running. It requires a real lab VM and is not covered by local CI.
 
 ```bash
 cd ansible/ric-lifecycle
@@ -99,7 +99,7 @@ ansible-playbook playbooks/validate.yml -i /tmp/ric-lifecycle-hosts.ini -K -e e2
 
 ### Full Testbed Path: RIC, E2Sim, And Observability
 
-This path changes the target VM and prompts for sudo with `-K`. It uses the repository default `fully-functional` mode, which expects the `e2sim` container to run, and installs Prometheus, Grafana, and Kiali when `istio_install_addons=true`. Not tested in this pass because it requires a real lab VM.
+This path changes the target VM and prompts for sudo with `-K`. It uses the repository default `fully-functional` mode, which expects the `e2sim` container to run, and installs Prometheus, Grafana, and Kiali when `istio_install_addons=true`. It requires a real lab VM and is not covered by local CI.
 
 ```bash
 cd ansible/ric-lifecycle
@@ -111,7 +111,7 @@ ansible-playbook playbooks/validate.yml -i /tmp/ric-lifecycle-hosts.ini -K -e e2
 
 ### Time-Based Switching
 
-Run this after the full testbed path and after Prometheus is reachable from the controller at the configured `prometheus_url` (`http://localhost:9090` by default). Not tested in this pass because it requires the deployed RIC testbed and live Prometheus access.
+Run this after the full testbed path and after Prometheus is reachable from the controller at the configured `prometheus_url` (`http://localhost:9090` by default). It requires the deployed RIC testbed and live Prometheus access.
 
 ```bash
 cd ansible/istio-ab-testing
@@ -122,7 +122,7 @@ ansible-playbook playbooks/run_demo.yml -i /tmp/istio-ab-hosts.ini
 
 ### Teardown
 
-The reset playbook exists for the main lifecycle workflow. These commands change the target VM and prompt for sudo with `-K`. Not tested in this pass.
+The reset playbook exists for the main lifecycle workflow. These commands change the target VM and prompt for sudo with `-K`.
 
 ```bash
 cd ansible/ric-lifecycle
@@ -147,7 +147,7 @@ ansible-playbook site.yaml -K -J
 ansible-playbook site-reset.yaml -K
 ```
 
-Those commands are not part of the RIC path. They use the optional Vagrant/VirtualBox demo, require a local `inventory/hosts.ini` and Ansible vault as described in `ansible/istio-rate-limit-demo/README.md`, and were not tested in this pass.
+Those commands are not part of the RIC path. They use the optional Vagrant/VirtualBox demo and require a local `inventory/hosts.ini` and Ansible vault as described in `ansible/istio-rate-limit-demo/README.md`.
 
 ## Validation Workflow
 
@@ -183,7 +183,7 @@ python3 scripts/plot_rate_limit.py \
   --output /tmp/rate-limit-sample.html
 ```
 
-HTML rendering commands were not tested in this pass because Plotly was not installed locally. The GitHub Actions workflow in `.github/workflows/ci.yml` installs Plotly, compiles both plotting scripts, syntax-checks the main lifecycle playbooks, and blocks common unsafe artifacts.
+HTML rendering requires Plotly and is outside the default local checks. The GitHub Actions workflow in `.github/workflows/ci.yml` checks Markdown links and documented paths, shell syntax, YAML syntax, Python compilation for Ansible scripts, Ansible syntax, prerequisite paths, and common unsafe artifacts. It does not deploy a cluster or render charts.
 
 `scripts/check-public-safety.sh` is a lightweight repository scanner for obvious unsafe files and secret-like values. It does not replace a dedicated scanner; `gitleaks detect --source .` is a useful stronger check when `gitleaks` is installed.
 
@@ -200,19 +200,25 @@ Manual inspection commands below are for the target VM after deployment:
 | RIC services present | `k3s kubectl -n ricplt get svc` and `k3s kubectl -n ricxapp get svc` | RIC platform services and xApp services are listed. |
 | xApp deployed | `k3s kubectl -n ricxapp get deploy | grep kpimon` | A `kpimon-go` deployment is present. |
 | E2Sim traffic running | `docker ps --filter name=e2sim` and `docker logs e2sim --tail 50` | In `fully-functional` mode, the `e2sim` container is running. Logs should be reviewed for active connection/report output; validation checks container state, not full KPM semantics. |
-| Prometheus, Kiali, Grafana reachable | `k3s kubectl -n istio-system get deploy prometheus kiali grafana` | Addon deployments are available when `istio_install_addons=true`. See `docs/observability.md` for manual port-forward access. |
+| Prometheus, Kiali, Grafana reachable | `k3s kubectl -n istio-system get deploy prometheus kiali grafana` | Addon deployments are available when `istio_install_addons=true`. See [docs/observability.md](docs/observability.md) for manual port-forward access. |
 
 The Time-Based Switching workflow creates an ignored artifacts directory inside `ansible/istio-ab-testing` during a run. Typical artifacts include Prometheus JSON snapshots, pivoted CSV files, Plotly HTML charts, and `flip_events_*.json`.
 
-The optional rate-limit demo creates an ignored artifacts directory inside `ansible/istio-rate-limit-demo`. Curated static examples are kept under `results/sample`.
+The optional rate-limit demo creates an ignored artifacts directory inside `ansible/istio-rate-limit-demo`. Static examples are kept under `results/sample`.
 
-For failures, start with `docs/troubleshooting.md`, then use `docs/e2sim-customization.md`, `docs/observability.md`, or `docs/time-based-switching.md` for workflow-specific checks.
+For failures, start with [docs/troubleshooting.md](docs/troubleshooting.md), then use [docs/e2sim-customization.md](docs/e2sim-customization.md), [docs/observability.md](docs/observability.md), or [docs/time-based-switching.md](docs/time-based-switching.md) for workflow-specific checks.
 
 ## Repository Structure
 
 ```text
 .
+├── README.md
+├── .editorconfig
+├── .gitattributes
+├── .github/workflows/
+├── .gitignore
 ├── ansible/
+│   ├── README.md
 │   ├── ric-lifecycle/
 │   ├── istio-ab-testing/
 │   └── istio-rate-limit-demo/
@@ -222,7 +228,6 @@ For failures, start with `docs/troubleshooting.md`, then use `docs/e2sim-customi
 ├── results/
 │   └── sample/
 ├── scripts/
-├── .github/workflows/
 ├── AGENTS.md
 ├── CITATION.cff
 ├── LICENSE
@@ -232,7 +237,7 @@ For failures, start with `docs/troubleshooting.md`, then use `docs/e2sim-customi
 └── THIRD_PARTY.md
 ```
 
-See `docs/architecture.md`, `docs/design-decisions.md`, `docs/observability.md`, `docs/e2sim-customization.md`, and `docs/time-based-switching.md` for focused notes.
+See [docs/architecture.md](docs/architecture.md), [docs/design-decisions.md](docs/design-decisions.md), [docs/observability.md](docs/observability.md), [docs/e2sim-customization.md](docs/e2sim-customization.md), and [docs/time-based-switching.md](docs/time-based-switching.md) for focused notes.
 
 ## Known Limitations
 
@@ -245,7 +250,7 @@ See `docs/architecture.md`, `docs/design-decisions.md`, `docs/observability.md`,
 
 ## Citation / Thesis Context
 
-This repository is a public engineering release derived from bachelor thesis work on O-RAN Near-RT RIC xApp lifecycle automation. It keeps the reproducible lab automation and selected small artifacts, not private thesis material.
+This repository comes from bachelor thesis work on O-RAN Near-RT RIC xApp lifecycle automation. It keeps the reproducible lab automation and selected small artifacts, not private thesis material.
 
 Use `CITATION.cff` if you need citation metadata for the repository. The sample results under `results/sample` document artifact format and selected thesis-era observations; they should not be treated as general performance benchmarks.
 

@@ -1,14 +1,14 @@
 # Review Needed
 
-These notes record what was copied from the local thesis mirror and what still needs manual review before publishing a first tagged release.
+These notes record what was copied from the local thesis mirror and what still needs review before the first tagged release.
 
 ## Copied
 
 - Single-VM Near-RT RIC lifecycle automation from `Experiments/ansible-k3s-ric-j-e2sim`.
 - Istio KPI MON A/B traffic experiment from `Experiments/istio-ab-testing`.
 - Optional K3s/NGINX/Istio rate-limit demo from `Experiments/ansible-k3s-istio-demos`.
-- Small curated sample CSV/Markdown outputs from `Tests/ansible-k3s-istio-demos` and `Tests/istio-ab-testing`.
-- The A/B statistical-validation notebook, kept once under `experiments/time-based-switching/`.
+- Small sample CSV/Markdown outputs from `Tests/ansible-k3s-istio-demos` and `Tests/istio-ab-testing`.
+- The A/B statistical-validation notebook, kept under `experiments/time-based-switching/`.
 - Repository hygiene files: `.editorconfig`, `.gitattributes`, and `.gitignore`.
 
 ## Intentionally Excluded
@@ -20,14 +20,14 @@ These notes record what was copied from the local thesis mirror and what still n
 - Packet captures.
 - Thesis directories, presentation PDFs, report PDFs, and personal documents.
 - Raw generated output batches, cache directories, build artifacts, and `.DS_Store` files.
-- Timestamped A/B artifact directories beyond the small curated sample set.
+- Timestamped A/B artifact directories beyond the small sample set.
 
 ## Public-Safety Adjustments In This Copy
 
 - Replaced real inventory files with neutral `hosts.ini.example` templates.
 - Removed personal machine references from the rate-limit demo documentation.
 - Replaced a hard-coded K3s tunnel script with an environment-variable based helper.
-- Removed the duplicate copied notebook under the A/B experiment tree; the curated copy is in `experiments/time-based-switching/`.
+- Removed the duplicate copied notebook under the A/B experiment tree; the kept copy is in `experiments/time-based-switching/`.
 
 ## Manual Review Before Publishing
 
