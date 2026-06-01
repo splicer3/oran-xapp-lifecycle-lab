@@ -1,0 +1,160 @@
+---
+- name: Istio rate limiting demonstration
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    demo_wait_seconds: 60
+    target_namespace: demo-nginx
+    app_label: demo-nginx
+    rps: 5
+    apply_contexts:
+      - SIDECAR_INBOUND
+    envoyfilter_name: demo-rl
+    prom_base_url: http://127.0.0.1:9090
+    destination_workload: demo-nginx
+    destination_namespace: demo-nginx
+    step: 1
+    metric_window_seconds: 600
+    rate_interval_seconds: 10
+    rate_limit_artifact_dir: "{{ lookup('env', 'PWD') }}/artifacts/rate-limit"
+    output_prefix: rate_limit_demo
+    metrics_padding_seconds: 30
+    rate_limit_pod_count: null
+    rate_limit_pod_selector: "app={{ app_label }}"
+    rate_limit_success_csv: "{{ rate_limit_artifact_dir }}/{{ output_prefix }}_200.csv"
+    rate_limit_limited_csv: "{{ rate_limit_artifact_dir }}/{{ output_prefix }}_429.csv"
+    rate_limit_markers_csv: "{{ rate_limit_artifact_dir }}/{{ output_prefix }}_markers.csv"
+    rate_limit_plot_path: "{{ rate_limit_artifact_dir }}/{{ output_prefix }}_plot.html"
+  tasks:
+    - name: Gather workload pods when count is not provided
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig_path | default(omit) }}"
+        api_version: v1
+        kind: Pod
+        namespace: "{{ target_namespace }}"
+        label_selectors:
+          - "{{ rate_limit_pod_selector }}"
+      register: rate_limit_workload_pods
+      when: rate_limit_pod_count is not defined or rate_limit_pod_count is none
+
+    - name: Determine effective rate limit pod count
+      ansible.builtin.set_fact:
+        rate_limit_pod_count_effective: >-
+          {{ rate_limit_pod_count
+             if rate_limit_pod_count is not none
+             else (
+               rate_limit_workload_pods.resources | default([])
+               | selectattr('status.phase', 'equalto', 'Running')
+               | list
+               | length
+             ) }}
+
+    - name: Ensure pod count minimum of one
+      ansible.builtin.set_fact:
+        rate_limit_pod_count_effective: "{{ [rate_limit_pod_count_effective | int, 1] | max }}"
+
+    - name: Run rate limiting demo pipeline
+      block:
+        - name: Enable local rate limiting
+          ansible.builtin.import_role:
+            name: enable_rate_limit
+          vars:
+            enable_rate_limit_target_namespace: "{{ target_namespace }}"
+            enable_rate_limit_app_label: "{{ app_label }}"
+            enable_rate_limit_rps: "{{ rps | int }}"
+            enable_rate_limit_apply_contexts: "{{ apply_contexts | list }}"
+            enable_rate_limit_envoyfilter_name: "{{ envoyfilter_name }}"
+
+        - name: Record rate limit enable timestamp
+          ansible.builtin.set_fact:
+            rate_limit_enabled_epoch: "{{ lookup('pipe', 'date +%s') | int }}"
+
+        - name: Record metrics window start
+          ansible.builtin.set_fact:
+            metrics_start_epoch: "{{ rate_limit_enabled_epoch }}"
+
+        - name: Wait for steady state
+          ansible.builtin.pause:
+            seconds: "{{ demo_wait_seconds | int }}"
+          when: (demo_wait_seconds | int) > 0
+
+        - name: Record metrics window end
+          ansible.builtin.set_fact:
+            metrics_end_epoch: "{{ lookup('pipe', 'date +%s') | int }}"
+      always:
+        - name: Disable local rate limiting
+          ansible.builtin.import_role:
+            name: disable_rate_limit
+          vars:
+            disable_rate_limit_target_namespace: "{{ target_namespace }}"
+            disable_rate_limit_envoyfilter_name: "{{ envoyfilter_name }}"
+
+        - name: Record rate limit disable timestamp
+          ansible.builtin.set_fact:
+            rate_limit_disabled_epoch: "{{ lookup('pipe', 'date +%s') | int }}"
+
+        - name: Wait post-disable padding window
+          ansible.builtin.pause:
+            seconds: "{{ metrics_padding_seconds | int }}"
+          when: (metrics_padding_seconds | int) > 0
+
+    - name: Build export marker events
+      ansible.builtin.set_fact:
+        export_marker_events:
+          - label: rate_limit_enabled
+            timestamp: "{{ rate_limit_enabled_epoch }}"
+          - label: rate_limit_disabled
+            timestamp: "{{ rate_limit_disabled_epoch }}"
+      when:
+        - metrics_start_epoch is defined
+        - metrics_end_epoch is defined
+        - rate_limit_enabled_epoch is defined
+        - rate_limit_disabled_epoch is defined
+
+    - name: Compute metrics export window with padding
+      ansible.builtin.set_fact:
+        metrics_export_start_epoch: "{{ [(metrics_start_epoch | int) - (metrics_padding_seconds | int), 0] | max }}"
+        metrics_export_end_epoch: "{{ ((rate_limit_disabled_epoch | default(metrics_end_epoch)) | int) + (metrics_padding_seconds | int) }}"
+        metrics_relative_zero_epoch: "{{ [(metrics_start_epoch | int) - (metrics_padding_seconds | int), 0] | max }}"
+      when:
+        - metrics_start_epoch is defined
+        - metrics_end_epoch is defined
+        - rate_limit_disabled_epoch is defined
+
+    - name: Export rate limiting telemetry CSVs
+      when:
+        - metrics_start_epoch is defined
+        - metrics_end_epoch is defined
+      ansible.builtin.import_role:
+        name: export_throughput_csv
+      vars:
+        export_throughput_csv_prom_base_url: "{{ prom_base_url }}"
+        export_throughput_csv_destination_workload: "{{ destination_workload }}"
+        export_throughput_csv_destination_namespace: "{{ destination_namespace }}"
+        export_throughput_csv_step: "{{ step | int }}"
+        export_throughput_csv_metric_window_seconds: "{{ metric_window_seconds | int }}"
+        export_throughput_csv_rate_interval_seconds: "{{ rate_interval_seconds | int }}"
+        export_throughput_csv_artifact_dir: "{{ rate_limit_artifact_dir }}"
+        export_throughput_csv_output_prefix: "{{ output_prefix }}"
+        export_throughput_csv_marker_events: "{{ export_marker_events | default([]) }}"
+        export_throughput_csv_start_epoch: "{{ metrics_export_start_epoch | default(metrics_start_epoch) }}"
+        export_throughput_csv_end_epoch: "{{ metrics_export_end_epoch | default(metrics_end_epoch) }}"
+        export_throughput_csv_time_zero_epoch: "{{ metrics_relative_zero_epoch | default(metrics_export_start_epoch | default(metrics_start_epoch)) }}"
+        export_throughput_csv_threshold_rps: "{{ (rps | int) * (rate_limit_pod_count_effective | int) }}"
+
+    - name: Render rate limit throughput plot
+      ansible.builtin.command:
+        argv:
+          - "{{ lookup('env', 'PWD') }}/.venv/bin/python"
+          - "{{ lookup('env', 'PWD') }}/scripts/plot_rate_limit.py"
+          - "--success-csv"
+          - "{{ rate_limit_success_csv }}"
+          - "--limited-csv"
+          - "{{ rate_limit_limited_csv }}"
+          - "--markers-csv"
+          - "{{ rate_limit_markers_csv }}"
+          - "--output"
+          - "{{ rate_limit_plot_path }}"
+      register: rate_limit_plot_result
+      changed_when: rate_limit_plot_result.rc == 0

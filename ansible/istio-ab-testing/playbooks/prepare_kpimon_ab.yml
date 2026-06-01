@@ -1,0 +1,151 @@
+- name: Prepare kpimon workloads for A/B testing
+  hosts: k3s_master
+  vars_files:
+    - ../group_vars/all.yml
+  vars:
+    kpimon_required_configmaps:
+      - "{{ kpimon_configmap_appenv }}"
+      - "{{ kpimon_configmap_appconfig }}"
+      - "{{ kpimon_dbaas_configmap }}"
+  tasks:
+    - name: Ensure exactly two versions are configured
+      ansible.builtin.assert:
+        that:
+          - versions | length == 2
+        fail_msg: "This playbook expects exactly two versions in versions[]."
+
+    - name: Resolve target service resource name from service host
+      ansible.builtin.set_fact:
+        kpimon_service_resource_name: "{{ service_host.split('.')[0] }}"
+
+    - name: Verify target namespace exists
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: v1
+        kind: Namespace
+        name: "{{ kpimon_namespace }}"
+      register: kpimon_namespace_info
+      changed_when: false
+
+    - name: Assert target namespace exists
+      ansible.builtin.assert:
+        that:
+          - (kpimon_namespace_info.resources | length) == 1
+        fail_msg: "Namespace '{{ kpimon_namespace }}' was not found."
+
+    - name: Verify target service exists
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: v1
+        kind: Service
+        namespace: "{{ kpimon_namespace }}"
+        name: "{{ kpimon_service_resource_name }}"
+      register: kpimon_service_info
+      changed_when: false
+
+    - name: Assert target service exists
+      ansible.builtin.assert:
+        that:
+          - (kpimon_service_info.resources | length) == 1
+        fail_msg: >-
+          Service '{{ kpimon_service_resource_name }}' was not found in namespace '{{ kpimon_namespace }}'.
+          service_host='{{ service_host }}'
+
+    - name: Verify required ConfigMaps exist
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: v1
+        kind: ConfigMap
+        namespace: "{{ kpimon_namespace }}"
+        name: "{{ item }}"
+      loop: "{{ kpimon_required_configmaps }}"
+      register: kpimon_configmap_info
+      changed_when: false
+
+    - name: Assert required ConfigMaps exist
+      ansible.builtin.assert:
+        that:
+          - (item.resources | length) == 1
+        fail_msg: "Required ConfigMap '{{ item.item }}' is missing in namespace '{{ kpimon_namespace }}'."
+      loop: "{{ kpimon_configmap_info.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Gather kpimon deployments by app/release labels
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: apps/v1
+        kind: Deployment
+        namespace: "{{ kpimon_namespace }}"
+        label_selectors:
+          - "app={{ kpimon_app_label }}"
+          - "release={{ kpimon_release_label }}"
+      register: kpimon_deployments
+      changed_when: false
+
+    - name: Select base kpimon deployments to scale down
+      ansible.builtin.set_fact:
+        kpimon_base_deployments: >-
+          {{
+            kpimon_deployments.resources
+            | rejectattr('metadata.name', 'equalto', kpimon_v1_deployment_name)
+            | rejectattr('metadata.name', 'equalto', kpimon_v2_deployment_name)
+            | list
+          }}
+
+    - name: Scale base kpimon deployments for A/B mode
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        state: present
+        merge_type:
+          - merge
+        definition:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: "{{ item.metadata.name }}"
+            namespace: "{{ kpimon_namespace }}"
+          spec:
+            replicas: "{{ kpimon_base_target_replicas | int }}"
+      loop: "{{ kpimon_base_deployments }}"
+      loop_control:
+        label: "{{ item.metadata.name }}"
+
+    - name: Build A/B deployment definitions
+      ansible.builtin.set_fact:
+        kpimon_ab_deployments:
+          - deployment_name: "{{ kpimon_v1_deployment_name }}"
+            version: "{{ versions[0] }}"
+            image: "{{ kpimon_v1_image }}"
+          - deployment_name: "{{ kpimon_v2_deployment_name }}"
+            version: "{{ versions[1] }}"
+            image: "{{ kpimon_v2_image }}"
+
+    - name: Deploy kpimon A/B workloads
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        state: present
+        definition: "{{ lookup('template', '../roles/istio_traffic/templates/kpimon_deployment.yaml.j2') | from_yaml }}"
+      loop: "{{ kpimon_ab_deployments }}"
+      loop_control:
+        loop_var: kpimon_variant
+        label: "{{ kpimon_variant.deployment_name }}"
+
+    - name: Wait for A/B deployments to be ready
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: apps/v1
+        kind: Deployment
+        namespace: "{{ kpimon_namespace }}"
+        name: "{{ item.deployment_name }}"
+      register: kpimon_ab_deploy_ready
+      retries: 40
+      delay: 15
+      until: >-
+        (kpimon_ab_deploy_ready.resources | length) == 1
+        and
+        ((kpimon_ab_deploy_ready.resources[0].status.readyReplicas | default(0) | int) > 0)
+      loop: "{{ kpimon_ab_deployments }}"
+      loop_control:
+        label: "{{ item.deployment_name }}"
+      changed_when: false

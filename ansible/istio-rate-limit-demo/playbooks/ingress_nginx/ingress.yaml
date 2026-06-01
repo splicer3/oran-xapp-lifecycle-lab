@@ -1,0 +1,37 @@
+---
+- name: Deploy NGINX Ingress + Demo App
+  hosts: localhost
+  gather_facts: false
+  vars:
+    kubeconfig_path: "{{ lookup('env','PWD') }}/artifacts/kubeconfig"
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  tasks:
+    - name: Ensure kubeconfig exists
+      ansible.builtin.stat:
+        path: "{{ kubeconfig_path }}"
+      register: kc
+    - name: Fail if kubeconfig missing
+      ansible.builtin.fail:
+        msg: "Kubeconfig not found at {{ kubeconfig_path }}. Run Task 1 first."
+      when: not kc.stat.exists
+
+- name: Install/Upgrade NGINX Ingress via Helm
+  hosts: localhost
+  gather_facts: false
+  vars:
+    kubeconfig_path: "{{ lookup('env','PWD') }}/artifacts/kubeconfig"
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  roles:
+    - ingress-nginx
+
+- name: Deploy demo nginx app, service, ingress
+  hosts: localhost
+  gather_facts: false
+  vars:
+    kubeconfig_path: "{{ lookup('env','PWD') }}/artifacts/kubeconfig"
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  roles:
+    - demo-nginx

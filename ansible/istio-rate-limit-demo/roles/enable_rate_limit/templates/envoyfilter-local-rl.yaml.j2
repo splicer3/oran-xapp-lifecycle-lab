@@ -1,0 +1,49 @@
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: {{ enable_rate_limit_envoyfilter_name }}
+  namespace: {{ enable_rate_limit_target_namespace }}
+spec:
+  workloadSelector:
+    labels:
+      app: {{ enable_rate_limit_app_label }}
+  configPatches:
+{% for ctx in enable_rate_limit_apply_contexts %}
+    - applyTo: HTTP_FILTER
+      match:
+        context: {{ ctx }}
+        listener:
+          filterChain:
+            filter:
+              name: envoy.filters.network.http_connection_manager
+              sub_filter:
+                name: envoy.filters.http.router
+      patch:
+        operation: INSERT_BEFORE
+        value:
+          name: envoy.filters.http.local_ratelimit
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit
+            stat_prefix: istio_local_rate_limiter
+            token_bucket:
+              max_tokens: {{ enable_rate_limit_rps | int }}
+              tokens_per_fill: {{ enable_rate_limit_rps | int }}
+              fill_interval: 1s
+            filter_enabled:
+              default_value:
+                numerator: 100
+                denominator: HUNDRED
+              runtime_key: local_rate_limit_enabled
+            filter_enforced:
+              default_value:
+                numerator: 100
+                denominator: HUNDRED
+              runtime_key: local_rate_limit_enforced
+            response_headers_to_add:
+              - append_action: OVERWRITE_IF_EXISTS_OR_ADD
+                header:
+                  key: retry-after
+                  value: "1"
+            status:
+              code: 429
+{% endfor %}

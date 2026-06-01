@@ -1,0 +1,155 @@
+---
+- name: Reset Near-RT RIC experiment host
+  hosts: ric_vm
+  gather_facts: true
+  tasks:
+    - name: Validate reset mode value
+      ansible.builtin.assert:
+        that:
+          - e2sim_mode in ['e2sim-ready', 'fully-functional']
+        fail_msg: "Invalid e2sim_mode '{{ e2sim_mode }}'. Allowed values: e2sim-ready, fully-functional"
+
+    - name: Check Docker binary presence
+      ansible.builtin.stat:
+        path: /usr/bin/docker
+      register: docker_binary
+
+    - name: Remove e2sim container
+      community.docker.docker_container:
+        name: "{{ e2sim_container_name }}"
+        state: absent
+      when: docker_binary.stat.exists
+      ignore_errors: true
+
+    - name: Remove chartmuseum container
+      community.docker.docker_container:
+        name: "{{ chartmuseum_container_name }}"
+        state: absent
+      when: docker_binary.stat.exists
+      ignore_errors: true
+
+    - name: Remove ric-common chartmuseum container
+      community.docker.docker_container:
+        name: "{{ ric_common_chartmuseum_container_name }}"
+        state: absent
+      when: docker_binary.stat.exists
+      ignore_errors: true
+
+    - name: Check kubeconfig presence
+      ansible.builtin.stat:
+        path: "{{ k3s_kubeconfig }}"
+      register: kubeconfig_stat
+
+    - name: Remove e2term nodeport service
+      kubernetes.core.k8s:
+        kubeconfig: "{{ k3s_kubeconfig }}"
+        api_version: v1
+        kind: Service
+        namespace: "{{ ric_e2term_namespace }}"
+        name: "{{ ric_e2term_nodeport_service_name }}"
+        state: absent
+      when: kubeconfig_stat.stat.exists
+      ignore_errors: true
+
+    - name: Ensure Istio addon manifest directory exists for teardown
+      ansible.builtin.file:
+        path: "{{ istio_addons_manifest_dir }}"
+        state: directory
+        mode: "0755"
+      when:
+        - reset_remove_istio_addons | bool
+        - kubeconfig_stat.stat.exists
+
+    - name: Download Istio addon manifests for teardown
+      ansible.builtin.get_url:
+        url: "{{ item.value }}"
+        dest: "{{ istio_addons_manifest_dir }}/{{ item.key }}.yaml"
+        mode: "0644"
+      loop: "{{ istio_addons_manifest_urls | dict2items }}"
+      when:
+        - reset_remove_istio_addons | bool
+        - kubeconfig_stat.stat.exists
+
+    - name: Remove Istio addons when requested
+      kubernetes.core.k8s:
+        kubeconfig: "{{ k3s_kubeconfig }}"
+        state: absent
+        src: "{{ istio_addons_manifest_dir }}/{{ item.key }}.yaml"
+      loop: "{{ istio_addons_manifest_urls | dict2items }}"
+      when:
+        - reset_remove_istio_addons | bool
+        - kubeconfig_stat.stat.exists
+      ignore_errors: true
+
+    - name: Check istioctl binary
+      ansible.builtin.stat:
+        path: "{{ istioctl_bin_path }}"
+      register: istioctl_binary
+
+    - name: Uninstall Istio control plane when requested
+      ansible.builtin.command: "{{ istioctl_bin_path }} uninstall --purge -y"
+      environment:
+        KUBECONFIG: "{{ k3s_kubeconfig }}"
+      when:
+        - reset_remove_istio | bool
+        - kubeconfig_stat.stat.exists
+        - istioctl_binary.stat.exists
+      changed_when: true
+      ignore_errors: true
+
+    - name: Remove Istio namespace when requested
+      kubernetes.core.k8s:
+        kubeconfig: "{{ k3s_kubeconfig }}"
+        api_version: v1
+        kind: Namespace
+        name: "{{ istio_namespace }}"
+        state: absent
+        wait: true
+        wait_timeout: 600
+      when:
+        - reset_remove_istio | bool
+        - reset_remove_istio_namespace | bool
+        - kubeconfig_stat.stat.exists
+      ignore_errors: true
+
+    - name: Remove RIC namespaces when requested
+      kubernetes.core.k8s:
+        kubeconfig: "{{ k3s_kubeconfig }}"
+        api_version: v1
+        kind: Namespace
+        name: "{{ item }}"
+        state: absent
+        wait: true
+        wait_timeout: 600
+      loop: "{{ ric_namespaces }}"
+      when:
+        - reset_remove_ric | bool
+        - kubeconfig_stat.stat.exists
+
+    - name: Remove local ric-dep checkout when requested
+      ansible.builtin.file:
+        path: "{{ ric_dep_dest }}"
+        state: absent
+      when: reset_remove_ric | bool
+
+    - name: Require explicit confirmation before uninstalling K3s
+      ansible.builtin.assert:
+        that:
+          - not (reset_uninstall_k3s | bool) or reset_confirm_uninstall_k3s == reset_k3s_confirmation_phrase
+        fail_msg: >-
+          K3s uninstall blocked. Set reset_uninstall_k3s=true and
+          reset_confirm_uninstall_k3s='{{ reset_k3s_confirmation_phrase }}' to proceed.
+
+    - name: Check K3s uninstall script
+      ansible.builtin.stat:
+        path: /usr/local/bin/k3s-uninstall.sh
+      register: k3s_uninstall_script
+
+    - name: Uninstall K3s when explicitly requested
+      ansible.builtin.command: /usr/local/bin/k3s-uninstall.sh
+      become: true
+      when:
+        - reset_uninstall_k3s | bool
+        - reset_confirm_uninstall_k3s == reset_k3s_confirmation_phrase
+        - k3s_uninstall_script.stat.exists
+      changed_when: true

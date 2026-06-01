@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-nginx
+  namespace: {{ demo_namespace }}
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: demo-nginx
+  template:
+    metadata:
+      labels:
+        app: demo-nginx
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: node-role.kubernetes.io/control-plane
+                    operator: DoesNotExist
+                  - key: node-role.kubernetes.io/master
+                    operator: DoesNotExist
+      containers:
+        - name: nginx
+          image: nginx:alpine
+          ports:
+            - containerPort: 80
+          volumeMounts:
+            - name: html
+              mountPath: /usr/share/nginx/html
+      # No network packages needed. Use sed to substitute ${MY_POD_NAME}.
+      initContainers:
+        - name: render-index
+          image: alpine:3.19
+          env:
+            - name: MY_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              sed "s|\${MY_POD_NAME}|${MY_POD_NAME}|g" /tmpl/index.html > /workdir/index.html
+              # Optional: quick sanity log
+              head -n 3 /workdir/index.html || true
+          volumeMounts:
+            - name: html
+              mountPath: /workdir
+            - name: tmpl
+              mountPath: /tmpl
+      volumes:
+        - name: html
+          emptyDir: {}
+        - name: tmpl
+          configMap:
+            name: demo-index
+            items:
+              - key: index.html
+                path: index.html

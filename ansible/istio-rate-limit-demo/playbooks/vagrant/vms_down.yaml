@@ -1,0 +1,23 @@
+---
+# Destroy the three VMs via Vagrant
+- name: Destroy VMs
+  hosts: hypervisor
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Run 'vagrant destroy -f' if project exists
+      ansible.builtin.shell: |
+        set -e
+        if [ -d "{{ vagrant_project_dir }}" ]; then
+          cd "{{ vagrant_project_dir }}"
+          vagrant destroy -f || true
+        fi
+      args:
+        executable: /bin/bash
+      register: vd
+      changed_when: "'default: VM not created' not in (vd.stdout | default(''))"
+
+# Potentially optional: keep the project directory for later reuse
+    - name: Keep project dir
+      ansible.builtin.debug:
+        msg: "VMs destroyed. Project dir kept at {{ vagrant_project_dir }}"

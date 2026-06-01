@@ -1,0 +1,136 @@
+- name: Prepare kpimon workloads for A/B traffic
+  import_playbook: prepare_kpimon_ab.yml
+- name: Run Istio traffic A/B setup
+  import_playbook: istio_traffic_ab.yml
+- name: Collect metrics snapshot
+  import_playbook: collect_metrics.yml
+
+- name: Fetch latest metrics snapshot
+  hosts: k3s_master
+  gather_facts: false
+  tasks:
+    - name: Ensure local metrics artifacts directory exists
+      ansible.builtin.file:
+        path: "{{ playbook_dir }}/../artifacts/metrics"
+        state: directory
+        mode: "0755"
+      delegate_to: localhost
+      run_once: true
+
+    - name: Use metrics_output_path from previous play if available
+      ansible.builtin.set_fact:
+        target_metric_path: "{{ metrics_output_path | default('') }}"
+
+    - name: Find metrics files (fallback)
+      ansible.builtin.find:
+        paths: "{{ ansible_user_dir }}/tmp"
+        patterns: "istio_*.json"
+        file_type: file
+      register: metrics_files
+      when: target_metric_path == ''
+
+    - name: Fail if no metrics files found
+      ansible.builtin.fail:
+        msg: "No metrics snapshots found in {{ ansible_user_dir }}/tmp on the remote host"
+      when: target_metric_path == '' and (metrics_files.files | length == 0)
+
+    - name: Select latest metrics file (fallback)
+      ansible.builtin.set_fact:
+        target_metric_path: "{{ (metrics_files.files | sort(attribute='mtime', reverse=True))[0].path }}"
+      when: target_metric_path == ''
+
+    - name: Fetch latest metrics file
+      ansible.builtin.fetch:
+        src: "{{ target_metric_path }}"
+        dest: "{{ playbook_dir }}/../artifacts/metrics/"
+        flat: true
+
+    - name: Expose latest metric filename
+      ansible.builtin.set_stats:
+        data:
+          latest_metric_filename: "{{ target_metric_path | basename }}"
+          latest_metric_path: "{{ target_metric_path }}"
+
+- name: Persist flip metadata and plot A/B traffic
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../group_vars/all.yml
+  tasks:
+    - name: Resolve flip events from k3s host context
+      ansible.builtin.set_fact:
+        run_flip_events: "{{ hostvars[groups['k3s_master'][0]].flip_events | default([]) }}"
+
+    - name: Initialize plotting metric filename
+      ansible.builtin.set_fact:
+        plot_metric_filename: "{{ latest_metric_filename | default('') }}"
+
+    - name: Find local metrics files when metric filename is unavailable
+      ansible.builtin.find:
+        paths: "{{ playbook_dir }}/../artifacts/metrics"
+        patterns: "istio_*.json"
+        file_type: file
+      register: local_metrics_files
+      when: plot_metric_filename | length == 0
+
+    - name: Fail when no local metrics snapshots exist
+      ansible.builtin.fail:
+        msg: "No local metrics snapshots found under {{ playbook_dir }}/../artifacts/metrics"
+      when:
+        - plot_metric_filename | length == 0
+        - (local_metrics_files.files | default([]) | length) == 0
+
+    - name: Select latest local metrics snapshot
+      ansible.builtin.set_fact:
+        plot_metric_filename: "{{ (local_metrics_files.files | sort(attribute='mtime', reverse=True))[0].path | basename }}"
+      when: plot_metric_filename | length == 0
+
+    - name: Build timestamped flip events filename
+      ansible.builtin.set_fact:
+        flip_events_filename: >-
+          {{
+            (plot_metric_filename | regex_replace('^istio_tcp_', 'flip_events_'))
+            if (plot_metric_filename is match('^istio_tcp_.*\\.json$'))
+            else ('flip_events_' ~ (lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ') | trim) ~ '.json')
+          }}
+
+    - name: Build flip events file path
+      ansible.builtin.set_fact:
+        flip_events_file: "{{ playbook_dir }}/../artifacts/metrics/{{ flip_events_filename }}"
+
+    - name: Write flip events metadata
+      ansible.builtin.copy:
+        content: "{{ run_flip_events | to_nice_json }}"
+        dest: "{{ flip_events_file }}"
+        mode: "0644"
+
+    - name: Build output CSV filename
+      ansible.builtin.set_fact:
+        plot_metric_csv_filename: >-
+          {{
+            (plot_metric_filename.rsplit('.', 1)[0] ~ '.csv')
+            if ('.' in plot_metric_filename)
+            else (plot_metric_filename ~ '.csv')
+          }}
+
+    - name: Build output HTML filename
+      ansible.builtin.set_fact:
+        plot_metric_html_filename: >-
+          {{
+            (plot_metric_filename.rsplit('.', 1)[0] ~ '.html')
+            if ('.' in plot_metric_filename)
+            else (plot_metric_filename ~ '.html')
+          }}
+
+    - name: Process latest snapshot and emit CSV + HTML
+      ansible.builtin.command:
+        cmd: >-
+          {{ plot_python_bin }} scripts/plot_ab.py artifacts/metrics/{{ plot_metric_filename }}
+          --flip-events artifacts/metrics/{{ flip_events_file | basename }}
+          --out-csv artifacts/metrics/{{ plot_metric_csv_filename }}
+          --out-html artifacts/metrics/{{ plot_metric_html_filename }}
+          --title {{ plot_html_title | quote }}
+          --drop-threshold {{ flip_drop_threshold }}
+        chdir: "{{ playbook_dir }}/.."
+      register: plot_cmd
+      changed_when: false

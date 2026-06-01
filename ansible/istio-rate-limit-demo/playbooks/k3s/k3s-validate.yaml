@@ -1,0 +1,66 @@
+---
+- name: Validate K3s cluster (all nodes Ready)
+  hosts: localhost
+  gather_facts: false
+  vars:
+    kubeconfig_path: "{{ lookup('env', 'PWD') }}/artifacts/kubeconfig"
+  tasks:
+    - name: Ensure kubeconfig exists
+      ansible.builtin.stat:
+        path: "{{ kubeconfig_path }}"
+      register: kc
+
+    - name: Fail if kubeconfig missing
+      ansible.builtin.fail:
+        msg: "Kubeconfig not found at {{ kubeconfig_path }}. Did the master role run?"
+      when: not kc.stat.exists
+
+    - name: Gather node status details
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig_path }}"
+        api_version: v1
+        kind: Node
+      register: nodes_info
+      changed_when: false
+
+    - name: Build node status summary
+      ansible.builtin.set_fact:
+        node_statuses: []
+
+    - name: Aggregate node readiness details
+      ansible.builtin.set_fact:
+        node_statuses: "{{ node_statuses + [ item.metadata.name ~ ': ' ~ ready_status ] }}"
+      loop: "{{ nodes_info.resources }}"
+      vars:
+        ready_status: >-
+          {{ item.status.conditions | default([]) |
+          selectattr('type', 'equalto', 'Ready') |
+          map(attribute='status') | first | default('Unknown') }}
+
+    - name: Display nodes status
+      ansible.builtin.debug:
+        msg: "{{ node_statuses }}"
+
+    - name: Identify ready nodes
+      ansible.builtin.set_fact:
+        ready_nodes: "{{ nodes_info.resources | json_query('[?status.conditions[?type==`Ready` && status==`True`]].metadata.name') }}"
+
+    - name: Count ready nodes
+      ansible.builtin.set_fact:
+        ready_count: "{{ ready_nodes | length }}"
+        total_count: "{{ nodes_info.resources | length }}"
+
+    - name: Display node counts
+      ansible.builtin.debug:
+        msg:
+          - "Found {{ total_count }} total nodes"
+          - "Ready nodes: {{ ready_count }}"
+          - "Expected nodes from inventory: {{ groups['k3s_cluster'] | length }}"
+
+    - name: Validate cluster health
+      ansible.builtin.assert:
+        that:
+          - total_count | int >= (groups['k3s_cluster'] | length)
+          - ready_count | int == (groups['k3s_cluster'] | length)
+        fail_msg: "Cluster validation failed: {{ ready_count }}/{{ total_count }} nodes ready, expected {{ groups['k3s_cluster'] | length }}"
+        success_msg: "Cluster validation passed: All {{ groups['k3s_cluster'] | length }} nodes are Ready"

@@ -1,0 +1,50 @@
+---
+# Installs the official ingress-nginx via Helm (idempotent)
+
+- name: Ensure ingress namespace exists
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig_path | default(omit) }}"
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ ingress_namespace }}"
+
+- name: Ensure ingress-nginx Helm repo configured
+  kubernetes.core.helm_repository:
+    kubeconfig: "{{ kubeconfig_path | default(omit) }}"
+    name: "{{ ingress_repo_name }}"
+    repo_url: "{{ ingress_repo_url }}"
+
+# Install or upgrade the chart. Defaults are fine for k3s (Service type LoadBalancer).
+- name: Helm upgrade --install ingress controller
+  kubernetes.core.helm:
+    kubeconfig: "{{ kubeconfig_path | default(omit) }}"
+    name: "{{ ingress_release }}"
+    chart_ref: "{{ ingress_repo_name }}/ingress-nginx"
+    release_namespace: "{{ ingress_namespace }}"
+    create_namespace: true
+    state: present
+    timeout: 600s   # 10 minutes
+    update_repo_cache: true
+
+- name: Wait for controller rollout
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ kubeconfig_path | default(omit) }}"
+    api_version: apps/v1
+    kind: Deployment
+    name: ingress-nginx-controller
+    namespace: "{{ ingress_namespace }}"
+  register: ingress_controller
+  until:
+    - ingress_controller.resources | length == 1
+    - ingress_controller.resources[0].status is defined
+    - (ingress_controller.resources[0].status.conditions | default([]))
+      | selectattr('type', 'equalto', 'Available')
+      | selectattr('status', 'equalto', 'True')
+      | list
+      | length > 0
+  retries: 30
+  delay: 10
+  changed_when: false

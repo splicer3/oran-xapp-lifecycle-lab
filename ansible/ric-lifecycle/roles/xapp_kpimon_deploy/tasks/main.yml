@@ -1,0 +1,359 @@
+---
+- name: Ensure chartmuseum storage exists
+  ansible.builtin.file:
+    path: "{{ chartmuseum_storage_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Ensure xApp workspace exists
+  ansible.builtin.file:
+    path: "{{ xapp_workspace }}"
+    state: directory
+    mode: "0755"
+
+- name: Ensure chartmuseum container is running
+  community.docker.docker_container:
+    name: "{{ chartmuseum_container_name }}"
+    image: "{{ chartmuseum_image }}"
+    state: started
+    restart_policy: always
+    pull: true
+    command: "--port=8080 --storage=local --storage-local-rootdir=/charts"
+    published_ports:
+      - "{{ chartmuseum_bind_address }}:{{ chartmuseum_port }}:8080"
+    volumes:
+      - "{{ chartmuseum_storage_dir }}:/charts"
+
+- name: Wait for chartmuseum endpoint
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ chartmuseum_port }}"
+    timeout: 60
+
+- name: Validate e2sim container is running in fully-functional mode
+  community.docker.docker_container_info:
+    name: "{{ e2sim_container_name }}"
+  register: xapp_e2sim_info
+  when: e2sim_mode == 'fully-functional'
+  changed_when: false
+
+- name: Enforce xApp start ordering after e2sim
+  ansible.builtin.assert:
+    that:
+      - xapp_e2sim_info.exists
+      - xapp_e2sim_info.container.State.Running
+    fail_msg: "e2sim must be running before deploying xApps in fully-functional mode."
+  when: e2sim_mode == 'fully-functional'
+
+- name: Render xApp config descriptor
+  ansible.builtin.template:
+    src: config-file.json.j2
+    dest: "{{ xapp_config_file_remote }}"
+    mode: "0644"
+
+- name: Copy xApp schema
+  ansible.builtin.copy:
+    src: schema.json
+    dest: "{{ xapp_schema_file_remote }}"
+    mode: "0644"
+
+- name: Gather existing xApp deployments
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ k3s_kubeconfig }}"
+    api_version: apps/v1
+    kind: Deployment
+    namespace: "{{ xapp_install_namespace }}"
+  register: xapp_deploy_info
+  changed_when: false
+
+- name: Evaluate xApp deployment status
+  ansible.builtin.set_fact:
+    xapp_candidate_deployments: >-
+      {{
+        xapp_deploy_info.resources
+        | selectattr('metadata.name', 'search', xapp_name_match_regex)
+        | list
+      }}
+    xapp_current_images: >-
+      {{
+        (
+          xapp_deploy_info.resources
+          | selectattr('metadata.name', 'search', xapp_name_match_regex)
+          | map(attribute='spec.template.spec.containers')
+          | list
+          | flatten
+          | map(attribute='image')
+          | list
+        )
+      }}
+    xapp_image_stripped: "{{ xapp_image | regex_replace('^docker\\.io/', '') }}"
+    xapp_expected_image_variants:
+      - "{{ xapp_image | regex_replace('^docker\\.io/', '') }}"
+      - "docker.io/{{ xapp_image | regex_replace('^docker\\.io/', '') }}"
+
+- name: Build xApp current image variants
+  ansible.builtin.set_fact:
+    xapp_current_image_variants: >-
+      {{
+        (
+          xapp_current_images
+          + (xapp_current_images | map('regex_replace', '^docker\\.io/', '') | list)
+        ) | unique
+      }}
+
+- name: Determine whether xApp install is required
+  ansible.builtin.set_fact:
+    xapp_installed_with_expected_image: >-
+      {{
+        (
+          xapp_expected_image_variants
+          | intersect(xapp_current_image_variants)
+          | length
+        ) > 0
+      }}
+    xapp_install_required: >-
+      {{
+        (force_xapp_reinstall | bool)
+        or
+        not (
+          (
+            xapp_expected_image_variants
+            | intersect(xapp_current_image_variants)
+            | length
+          ) > 0
+        )
+      }}
+
+- name: Ensure appmgr checkout parent directory exists
+  ansible.builtin.file:
+    path: "{{ xapp_dms_cli_repo_dest | dirname }}"
+    state: directory
+    mode: "0755"
+  when: (xapp_dms_cli_override | length) == 0
+
+- name: Clone ric-plt-appmgr repository for dms_cli
+  ansible.builtin.git:
+    repo: "{{ xapp_dms_cli_repo_url }}"
+    dest: "{{ xapp_dms_cli_repo_dest }}"
+    version: "{{ ric_release_branch }}"
+    force: false
+    update: true
+  when: (xapp_dms_cli_override | length) == 0
+
+- name: Install software-properties-common for Ubuntu PPA management
+  ansible.builtin.apt:
+    name:
+      - software-properties-common
+    state: present
+    update_cache: true
+  become: true
+  when:
+    - (xapp_dms_cli_override | length) == 0
+    - ansible_distribution == "Ubuntu"
+    - xapp_dms_cli_python_version == "3.9"
+
+- name: Add deadsnakes PPA for Python 3.9
+  ansible.builtin.apt_repository:
+    repo: ppa:deadsnakes/ppa
+    state: present
+    update_cache: true
+  become: true
+  when:
+    - (xapp_dms_cli_override | length) == 0
+    - ansible_distribution == "Ubuntu"
+    - xapp_dms_cli_python_version == "3.9"
+
+- name: Set preferred Python executable for dms_cli venv
+  ansible.builtin.set_fact:
+    xapp_dms_cli_python_executable: "python{{ xapp_dms_cli_python_version }}"
+  when: (xapp_dms_cli_override | length) == 0
+
+- name: Install Python runtime for dms_cli venv
+  block:
+    - name: Install Python {{ xapp_dms_cli_python_version }} dev/venv packages
+      ansible.builtin.apt:
+        name:
+          - "python{{ xapp_dms_cli_python_version }}-dev"
+          - "python{{ xapp_dms_cli_python_version }}-venv"
+        state: present
+        update_cache: true
+      become: true
+  rescue:
+    - name: Install default Python dev/venv packages as fallback
+      ansible.builtin.apt:
+        name:
+          - python3-dev
+          - python3-venv
+        state: present
+        update_cache: true
+      become: true
+
+    - name: Switch dms_cli venv Python executable to python3 fallback
+      ansible.builtin.set_fact:
+        xapp_dms_cli_python_executable: "python3"
+  when: (xapp_dms_cli_override | length) == 0
+
+- name: Create dms_cli virtual environment
+  ansible.builtin.command: >-
+    {{ xapp_dms_cli_python_executable }} -m venv {{ xapp_dms_cli_venv_dir }}
+  args:
+    creates: "{{ xapp_dms_cli_venv_dir }}/bin/activate"
+    chdir: "{{ xapp_dms_cli_workdir }}"
+  when: (xapp_dms_cli_override | length) == 0
+
+- name: Install dms_cli Python requirements
+  ansible.builtin.pip:
+    requirements: "{{ xapp_dms_cli_workdir }}/requirements.txt"
+    virtualenv: "{{ xapp_dms_cli_venv_dir }}"
+  when: (xapp_dms_cli_override | length) == 0
+
+- name: Pin setuptools for Python 3.9 dms_cli compatibility
+  ansible.builtin.pip:
+    name: "setuptools=={{ xapp_dms_cli_setuptools_version }}"
+    virtualenv: "{{ xapp_dms_cli_venv_dir }}"
+  when: (xapp_dms_cli_override | length) == 0
+
+- name: Install dms_cli package from xapp_onboarder
+  ansible.builtin.pip:
+    name: "."
+    virtualenv: "{{ xapp_dms_cli_venv_dir }}"
+    chdir: "{{ xapp_dms_cli_workdir }}"
+  when: (xapp_dms_cli_override | length) == 0
+
+- name: Resolve dms_cli command path
+  ansible.builtin.set_fact:
+    xapp_dms_cli_cmd: >-
+      {{
+        xapp_dms_cli_override
+        if (xapp_dms_cli_override | length) > 0
+        else xapp_dms_cli_venv_dir ~ '/bin/dms_cli'
+      }}
+
+- name: Check resolved dms_cli command
+  ansible.builtin.stat:
+    path: "{{ xapp_dms_cli_cmd }}"
+  register: xapp_dms_cli_stat
+  when: (xapp_dms_cli_override | length) == 0
+
+- name: Fail when dms_cli cannot be resolved
+  ansible.builtin.fail:
+    msg: >-
+      Could not resolve dms_cli. Expected executable at '{{ xapp_dms_cli_cmd }}'
+      or set xapp_dms_cli_override to a valid command path.
+  when:
+    - (xapp_dms_cli_override | length) == 0
+    - not xapp_dms_cli_stat.stat.exists
+
+- name: Build default onboarding commands
+  ansible.builtin.set_fact:
+    xapp_default_onboard_command: >-
+      {{ xapp_dms_cli_cmd }} onboard
+      --config_file_path={{ xapp_config_file_remote }}
+      --shcema_file_path={{ xapp_schema_file_remote }}
+    xapp_default_download_helm_command: >-
+      {{ xapp_dms_cli_cmd }} download_helm_chart
+      {{ xapp_chart_name }} {{ xapp_chart_version }}
+    xapp_default_install_command: >-
+      {{ helm_bin_path }} upgrade --install {{ xapp_chart_name }}
+      {{ xapp_chart_package_path }}
+      -n {{ xapp_install_namespace }} --create-namespace
+
+- name: Select effective onboarding commands
+  ansible.builtin.set_fact:
+    xapp_onboard_command: >-
+      {{
+        xapp_onboard_command_override
+        if (xapp_onboard_command_override | length) > 0
+        else xapp_default_onboard_command
+      }}
+    xapp_download_helm_command: >-
+      {{
+        xapp_download_helm_command_override
+        if (xapp_download_helm_command_override | length) > 0
+        else xapp_default_download_helm_command
+      }}
+    xapp_install_command: >-
+      {{
+        xapp_install_command_override
+        if (xapp_install_command_override | length) > 0
+        else xapp_default_install_command
+      }}
+
+- name: Onboard xApp package
+  ansible.builtin.shell: "{{ xapp_onboard_command }}"
+  args:
+    executable: /bin/bash
+    chdir: "{{ xapp_workspace }}"
+  environment:
+    KUBECONFIG: "{{ k3s_kubeconfig }}"
+    CHART_REPO_URL: "{{ chartmuseum_repo_url }}"
+    PATH: "{{ (helm_bin_path | dirname) ~ ':' ~ (ansible_env.PATH | default('/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin')) }}"
+  register: xapp_onboard_result
+  when: xapp_install_required
+  changed_when: xapp_onboard_result.rc == 0
+
+- name: Download xApp Helm chart
+  ansible.builtin.shell: "{{ xapp_download_helm_command }}"
+  args:
+    executable: /bin/bash
+    chdir: "{{ xapp_workspace }}"
+  environment:
+    KUBECONFIG: "{{ k3s_kubeconfig }}"
+    CHART_REPO_URL: "{{ chartmuseum_repo_url }}"
+    PATH: "{{ (helm_bin_path | dirname) ~ ':' ~ (ansible_env.PATH | default('/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin')) }}"
+  register: xapp_download_helm_result
+  when: xapp_install_required
+  changed_when: xapp_download_helm_result.rc == 0
+
+- name: Ensure downloaded xApp Helm chart archive exists
+  ansible.builtin.stat:
+    path: "{{ xapp_chart_package_path }}"
+  register: xapp_chart_archive
+  when: xapp_install_required
+
+- name: Fail when expected xApp Helm chart archive is missing
+  ansible.builtin.fail:
+    msg: >-
+      Expected Helm chart archive '{{ xapp_chart_package_path }}'
+      was not generated by dms_cli download_helm_chart.
+  when:
+    - xapp_install_required
+    - not xapp_chart_archive.stat.exists
+
+- name: Install xApp instance
+  ansible.builtin.shell: "{{ xapp_install_command }}"
+  args:
+    executable: /bin/bash
+    chdir: "{{ xapp_workspace }}"
+  environment:
+    KUBECONFIG: "{{ k3s_kubeconfig }}"
+    CHART_REPO_URL: "{{ chartmuseum_repo_url }}"
+    PATH: "{{ (helm_bin_path | dirname) ~ ':' ~ (ansible_env.PATH | default('/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin')) }}"
+  register: xapp_install_result
+  when: xapp_install_required
+  changed_when: xapp_install_result.rc == 0
+
+- name: Log skipped xApp onboarding
+  ansible.builtin.debug:
+    msg: "Skipping xApp onboarding/install because deployment already uses image {{ xapp_image }}."
+  when: not xapp_install_required
+
+- name: Wait for xApp deployment
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ k3s_kubeconfig }}"
+    api_version: apps/v1
+    kind: Deployment
+    namespace: "{{ xapp_install_namespace }}"
+  register: xapp_deploy_wait
+  retries: "{{ xapp_wait_retries }}"
+  delay: "{{ xapp_wait_delay }}"
+  until: >-
+    (
+      xapp_deploy_wait.resources
+      | selectattr('metadata.name', 'search', xapp_name_match_regex)
+      | selectattr('status.readyReplicas', 'defined')
+      | selectattr('status.readyReplicas', '>', 0)
+      | list
+      | length
+    ) > 0
+  changed_when: false

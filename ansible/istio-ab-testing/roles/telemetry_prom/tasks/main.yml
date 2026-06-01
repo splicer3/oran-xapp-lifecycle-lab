@@ -1,0 +1,33 @@
+- name: Capture metrics timestamp
+  ansible.builtin.set_fact:
+    metrics_timestamp: "{{ lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ') | trim }}"
+  run_once: true
+
+- name: Query Prometheus for request counts by version (range)
+  ansible.builtin.uri:
+    url: >-
+      {{ prometheus_url }}/api/v1/query_range?query={{ metric_query | urlencode }}&start={{ prom_range_start | urlencode }}&end={{ prom_range_end | urlencode }}&step={{ prom_step | urlencode }}
+    method: GET
+    return_content: true
+  register: prom_resp
+  delegate_to: localhost
+  run_once: true
+  when: prom_range_start is defined and prom_range_end is defined and prom_step is defined
+
+- name: Query Prometheus for request counts by version (instant)
+  ansible.builtin.uri:
+    url: "{{ prometheus_url }}/api/v1/query?query={{ metric_query | urlencode }}"
+    method: GET
+    return_content: true
+  register: prom_resp
+  delegate_to: localhost
+  run_once: true
+  when: prom_range_start is not defined or prom_range_end is not defined or prom_step is not defined
+
+- name: Write metrics to file
+  ansible.builtin.copy:
+    content: "{{ prom_resp.content }}"
+    dest: "{{ ansible_user_dir }}/tmp/istio_requests_{{ metrics_timestamp }}.json"
+    mode: "0600"
+  delegate_to: localhost
+  run_once: true

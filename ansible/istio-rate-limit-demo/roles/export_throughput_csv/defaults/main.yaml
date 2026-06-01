@@ -1,0 +1,30 @@
+---
+export_throughput_csv_prom_base_url: http://127.0.0.1:9090
+export_throughput_csv_destination_workload: demo-nginx
+export_throughput_csv_destination_namespace: demo-nginx
+export_throughput_csv_step: 1
+export_throughput_csv_metric_window_seconds: 600
+export_throughput_csv_rate_interval_seconds: 10
+export_throughput_csv_artifact_dir: "{{ lookup('env', 'PWD') }}/artifacts/rate-limit"
+export_throughput_csv_output_prefix: rate_limit_demo
+export_throughput_csv_output_200_csv: "{{ export_throughput_csv_artifact_dir }}/{{ export_throughput_csv_output_prefix }}_200.csv"
+export_throughput_csv_output_429_csv: "{{ export_throughput_csv_artifact_dir }}/{{ export_throughput_csv_output_prefix }}_429.csv"
+export_throughput_csv_output_markers_csv: "{{ export_throughput_csv_artifact_dir }}/{{ export_throughput_csv_output_prefix }}_markers.csv"
+export_throughput_csv_series_definitions:
+  - series_name: success
+    label: 200
+    response_code: "200"
+    header: throughput_rps
+    output_csv: "{{ export_throughput_csv_output_200_csv }}"
+    detect_threshold: true
+  - series_name: rate_limited
+    label: 429
+    response_code: "429"
+    header: rate_limited_rps
+    output_csv: "{{ export_throughput_csv_output_429_csv }}"
+    detect_positive: true
+export_throughput_csv_marker_events: []
+export_throughput_csv_time_zero_epoch: 0
+export_throughput_csv_threshold_rps: 0
+export_throughput_csv_threshold_marker_label: rate_limit_effective
+export_throughput_csv_positive_floor: 0

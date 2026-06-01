@@ -1,0 +1,17 @@
+# /etc/rancher/k3s/config.yaml for agent
+server: "{{ k3s_server_url }}"
+token: "{{ k3s_token }}"
+# Prefer the host-only/bridged IP used by Ansible to reach the node
+node-ip: "{{ ansible_host | default(ansible_default_ipv4.address) }}"
+# Also advertise the bridged LAN IP so clients outside the host-only network can reach NodePorts/LB
+{% if vm_worker1_lan_ip is defined and vm_worker1_lan_ip %}
+node-external-ip: "{{ vm_worker1_lan_ip }}"
+{% endif %}
+# Pin flannel to the host-only interface for stable routing between nodes
+{% if k3s_flannel_iface is defined and k3s_flannel_iface %}
+flannel-iface: "{{ k3s_flannel_iface }}"
+{% endif %}
+# Ensure kubelet listens on the node interface for logs/exec/attach over 10250
+kubelet-arg:
+  - "address=0.0.0.0"
+  - "resolv-conf=/run/systemd/resolve/resolv.conf"

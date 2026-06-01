@@ -1,0 +1,39 @@
+- name: Collect metrics
+  hosts: k3s_master
+  vars_files:
+    - ../group_vars/all.yml
+  vars:
+    prom_range_start: "{{ hostvars[inventory_hostname].traffic_run_start | default(lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ') | trim) }}"
+    prom_range_end: "{{ hostvars[inventory_hostname].traffic_run_end | default(lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ') | trim) }}"
+    metric_query: >
+      sum(rate({{ prom_metric }}{
+        destination_workload_namespace="{{ namespace }}",
+        reporter="{{ prom_reporter }}",
+        destination_service="{{ service_host }}"
+      }[{{ prom_range_window }}])) by (destination_version)
+    metrics_filename: "istio_tcp_{{ ansible_date_time.iso8601 }}.json"
+    metrics_output_path: "{{ ansible_user_dir }}/tmp/{{ metrics_filename }}"
+  tasks:
+    - name: Query Prometheus (range)
+      ansible.builtin.uri:
+        url: >-
+          {{ prometheus_url }}/api/v1/query_range?query={{ metric_query | urlencode }}&start={{ prom_range_start | urlencode }}&end={{ prom_range_end | urlencode }}&step={{ prom_step | urlencode }}
+        method: GET
+        return_content: true
+      register: prom_resp
+      delegate_to: localhost
+
+    - name: Save metrics snapshot
+      ansible.builtin.copy:
+        content: "{{ prom_resp.content }}"
+        dest: "{{ metrics_output_path }}"
+        mode: "0600"
+
+    - name: Expose metrics file path
+      ansible.builtin.set_stats:
+        data:
+          metrics_output_path: "{{ metrics_output_path }}"
+          metrics_filename: "{{ metrics_filename }}"
+          prom_range_start: "{{ prom_range_start }}"
+          prom_range_end: "{{ prom_range_end }}"
+          metric_query: "{{ metric_query }}"

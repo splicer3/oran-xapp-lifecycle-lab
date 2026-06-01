@@ -1,0 +1,6 @@
+---
+- name: Apply EnvoyFilter for rate limiting
+  kubernetes.core.k8s:
+    kubeconfig: "{{ local_kubeconfig | default(omit) }}"
+    state: present
+    definition: "{{ lookup('template', 'envoyfilter-local-rl.yaml.j2') | from_yaml }}"

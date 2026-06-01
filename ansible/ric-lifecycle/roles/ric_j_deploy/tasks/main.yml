@@ -1,0 +1,290 @@
+---
+- name: Install RIC deployment prerequisites
+  ansible.builtin.apt:
+    name:
+      - git
+      - bash
+      - curl
+      - jq
+      - tar
+    state: present
+    update_cache: true
+  become: true
+
+- name: Check Helm binary availability
+  ansible.builtin.command: "{{ helm_bin_path }} version --short"
+  register: helm_version_check
+  changed_when: false
+  failed_when: false
+
+- name: Map host architecture to Helm artifact architecture
+  ansible.builtin.set_fact:
+    helm_artifact_arch: "{{ helm_arch_map[ansible_architecture] | default('') }}"
+  vars:
+    helm_arch_map:
+      x86_64: amd64
+      aarch64: arm64
+      arm64: arm64
+  when: helm_version_check.rc != 0
+
+- name: Validate supported architecture for Helm download
+  ansible.builtin.assert:
+    that:
+      - helm_artifact_arch | length > 0
+    fail_msg: "Unsupported architecture '{{ ansible_architecture }}' for Helm download."
+  when: helm_version_check.rc != 0
+
+- name: Build Helm download paths
+  ansible.builtin.set_fact:
+    helm_tarball_name: "helm-{{ helm_version }}-linux-{{ helm_artifact_arch }}.tar.gz"
+    helm_tarball_path: "{{ helm_download_dir }}/helm-{{ helm_version }}-linux-{{ helm_artifact_arch }}.tar.gz"
+  when: helm_version_check.rc != 0
+
+- name: Ensure Helm download directory exists
+  ansible.builtin.file:
+    path: "{{ helm_download_dir }}"
+    state: directory
+    mode: "0755"
+  when: helm_version_check.rc != 0
+
+- name: Ensure Helm install directory exists
+  ansible.builtin.file:
+    path: "{{ helm_bin_path | dirname }}"
+    state: directory
+    mode: "0755"
+  when: helm_version_check.rc != 0
+
+- name: Download Helm release tarball
+  ansible.builtin.get_url:
+    url: "{{ helm_download_base_url }}/{{ helm_tarball_name }}"
+    dest: "{{ helm_tarball_path }}"
+    mode: "0644"
+  when: helm_version_check.rc != 0
+
+- name: Extract Helm release
+  ansible.builtin.unarchive:
+    src: "{{ helm_tarball_path }}"
+    dest: "{{ helm_download_dir }}"
+    remote_src: true
+    creates: "{{ helm_download_dir }}/linux-{{ helm_artifact_arch }}/helm"
+  when: helm_version_check.rc != 0
+
+- name: Install Helm binary
+  ansible.builtin.copy:
+    src: "{{ helm_download_dir }}/linux-{{ helm_artifact_arch }}/helm"
+    dest: "{{ helm_bin_path }}"
+    mode: "0755"
+    remote_src: true
+  when: helm_version_check.rc != 0
+
+- name: Verify Helm after installation
+  ansible.builtin.command: "{{ helm_bin_path }} version --short"
+  register: helm_version_verify
+  changed_when: false
+
+- name: Ensure RIC checkout parent directory exists
+  ansible.builtin.file:
+    path: "{{ ric_dep_dest | dirname }}"
+    state: directory
+    mode: "0755"
+
+- name: Clone ric-dep repository at requested branch
+  ansible.builtin.git:
+    repo: "{{ ric_dep_repo_url }}"
+    dest: "{{ ric_dep_dest }}"
+    version: "{{ ric_release_branch }}"
+    force: "{{ ric_dep_git_force_update | bool }}"
+    update: true
+
+- name: Check available RIC recipe candidates
+  ansible.builtin.stat:
+    path: "{{ ric_dep_dest }}/{{ item }}"
+  loop: "{{ ric_recipe_candidates }}"
+  register: ric_recipe_stats
+
+- name: Select recipe file
+  ansible.builtin.set_fact:
+    ric_recipe_relpath: >-
+      {{
+        (ric_recipe_stats.results
+        | selectattr('stat.exists', 'equalto', true)
+        | map(attribute='item')
+        | list
+        | first)
+        | default('')
+      }}
+
+- name: Fail when no recipe file exists
+  ansible.builtin.fail:
+    msg: >-
+      Unable to find a usable RIC recipe in {{ ric_dep_dest }}.
+      Checked: {{ ric_recipe_candidates | join(', ') }}
+  when: ric_recipe_relpath | length == 0
+
+- name: Check required RIC namespaces
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ k3s_kubeconfig }}"
+    api_version: v1
+    kind: Namespace
+    name: "{{ item }}"
+  loop: "{{ ric_namespaces }}"
+  register: ric_namespace_checks
+  failed_when: false
+  changed_when: false
+
+- name: Check ricplt pod inventory
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ k3s_kubeconfig }}"
+    api_version: v1
+    kind: Pod
+    namespace: ricplt
+  register: ric_ricplt_pods
+  failed_when: false
+  changed_when: false
+
+- name: Decide if RIC install is required
+  ansible.builtin.set_fact:
+    ric_install_required: >-
+      {{
+        (force_ric_reinstall | bool)
+        or
+        ((ric_namespace_checks.results | map(attribute='resources') | map('length') | list | sum)
+          < (ric_namespaces | length))
+        or
+        ((ric_ricplt_pods.resources | default([]) | length) < (ric_validate_pod_minimum | int))
+      }}
+
+- name: Run ric-dep install script
+  block:
+    - name: Patch ric-dep common-template installer for deterministic Helm local repo setup
+      ansible.builtin.copy:
+        dest: "{{ ric_dep_dest }}/bin/install_common_templates_to_helm.sh"
+        mode: "0755"
+        content: |
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          HELM_BIN="{{ helm_bin_path }}"
+          "${HELM_BIN}" repo remove local >/dev/null 2>&1 || true
+          "${HELM_BIN}" repo add local "http://127.0.0.1:{{ ric_common_chartmuseum_port }}/charts" >/dev/null
+          "${HELM_BIN}" repo update >/dev/null
+          "${HELM_BIN}" search repo local/ric-common >/dev/null
+
+    - name: Ensure ric-common chart storage directory exists
+      ansible.builtin.file:
+        path: "{{ ric_common_chartmuseum_storage_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Read ric-common chart version
+      ansible.builtin.command: >-
+        awk '/^version:/ {print $2}'
+        {{ ric_dep_dest }}/ric-common/Common-Template/helm/ric-common/Chart.yaml
+      register: ric_common_chart_version
+      changed_when: false
+
+    - name: Package ric-common chart
+      ansible.builtin.command: >-
+        {{ helm_bin_path }} package -d "{{ ansible_facts.user_dir }}/tmp"
+        {{ ric_dep_dest }}/ric-common/Common-Template/helm/ric-common
+      register: ric_common_chart_package
+      changed_when: "'Successfully packaged chart' in (ric_common_chart_package.stdout | default(''))"
+
+    - name: Copy ric-common packaged chart to chartmuseum storage
+      ansible.builtin.copy:
+        src: "{{ ansible_facts.user_dir }}/tmp/ric-common-{{ ric_common_chart_version.stdout | trim }}.tgz"
+        dest: "{{ ric_common_chartmuseum_storage_dir }}/ric-common-{{ ric_common_chart_version.stdout | trim }}.tgz"
+        mode: "0644"
+        remote_src: true
+
+    - name: Ensure ric-common chartmuseum container is running
+      community.docker.docker_container:
+        name: "{{ ric_common_chartmuseum_container_name }}"
+        image: "{{ ric_common_chartmuseum_image }}"
+        state: started
+        restart_policy: always
+        pull: true
+        env:
+          DEBUG: "1"
+          STORAGE: "local"
+          STORAGE_LOCAL_ROOTDIR: "/charts"
+          CONTEXT_PATH: "/charts"
+        published_ports:
+          - "{{ ric_common_chartmuseum_bind_address }}:{{ ric_common_chartmuseum_port }}:8080"
+        volumes:
+          - "{{ ric_common_chartmuseum_storage_dir }}:/charts"
+
+    - name: Wait for ric-common chartmuseum endpoint
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ ric_common_chartmuseum_port }}"
+        timeout: 60
+
+    - name: Prepare ric-common local Helm repo alias
+      ansible.builtin.command: ./install_common_templates_to_helm.sh
+      args:
+        chdir: "{{ ric_dep_dest }}/bin"
+      environment:
+        KUBECONFIG: "{{ k3s_kubeconfig }}"
+        PATH: "{{ (helm_bin_path | dirname) ~ ':' ~ (ansible_env.PATH | default('/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin')) }}"
+      changed_when: false
+
+    - name: Run ric-dep install script
+      ansible.builtin.shell: "./bin/install -f {{ ric_recipe_relpath }}"
+      args:
+        chdir: "{{ ric_dep_dest }}"
+        executable: /bin/bash
+      environment:
+        KUBECONFIG: "{{ k3s_kubeconfig }}"
+        PATH: "{{ (helm_bin_path | dirname) ~ ':' ~ (ansible_env.PATH | default('/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin')) }}"
+      async: "{{ ric_install_timeout }}"
+      poll: 15
+      register: ric_install_cmd
+  always:
+    - name: Restore ric-dep patched installer to repository state
+      ansible.builtin.command: git checkout -- bin/install_common_templates_to_helm.sh
+      args:
+        chdir: "{{ ric_dep_dest }}"
+      changed_when: false
+      failed_when: false
+  when: ric_install_required
+
+- name: Log skipped RIC install
+  ansible.builtin.debug:
+    msg: "Skipping ric-dep install because namespaces and pods are already present."
+  when: not ric_install_required
+
+- name: Wait for RIC namespaces to exist
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ k3s_kubeconfig }}"
+    api_version: v1
+    kind: Namespace
+    name: "{{ item }}"
+  loop: "{{ ric_namespaces }}"
+  register: ric_namespaces_wait
+  until: (ric_namespaces_wait.resources | default([]) | length) == 1
+  retries: "{{ ric_wait_retries }}"
+  delay: "{{ ric_wait_delay }}"
+  changed_when: false
+
+- name: Wait for pods in platform namespaces to be Running/Succeeded
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ k3s_kubeconfig }}"
+    api_version: v1
+    kind: Pod
+    namespace: "{{ item }}"
+  loop: "{{ ric_platform_namespaces }}"
+  register: ric_namespace_pods_wait
+  until: >-
+    (ric_namespace_pods_wait.resources | length) >= (ric_validate_pod_minimum | int)
+    and
+    (
+      ric_namespace_pods_wait.resources
+      | rejectattr('status.phase', 'equalto', 'Running')
+      | rejectattr('status.phase', 'equalto', 'Succeeded')
+      | list
+      | length
+    ) == 0
+  retries: "{{ ric_wait_retries }}"
+  delay: "{{ ric_wait_delay }}"
+  changed_when: false

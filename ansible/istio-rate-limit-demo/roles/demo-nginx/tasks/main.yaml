@@ -1,0 +1,77 @@
+---
+# Deploys:
+# - ConfigMap with HTML template
+# - Deployment (3 replicas) with Downward API + initContainer envsubst
+# - ClusterIP Service
+# - Ingress for demo_host
+
+- name: Ensure demo namespace exists
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig_path | default(omit) }}"
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ demo_namespace }}"
+
+- name: Ensure local manifest output dir exists
+  ansible.builtin.file:
+    path: "{{ lookup('env', 'PWD') }}/artifacts/manifests"
+    state: directory
+    mode: "0755"
+
+- name: Render ConfigMap
+  ansible.builtin.template:
+    src: cm-index.yaml.j2
+    dest: "{{ lookup('env', 'PWD') }}/artifacts/manifests/cm-index.yaml"
+    mode: "0644"
+
+- name: Render Deployment
+  ansible.builtin.template:
+    src: deploy.yaml.j2
+    dest: "{{ lookup('env', 'PWD') }}/artifacts/manifests/deploy.yaml"
+    mode: "0644"
+
+- name: Render Service
+  ansible.builtin.template:
+    src: svc.yaml.j2
+    dest: "{{ lookup('env', 'PWD') }}/artifacts/manifests/svc.yaml"
+    mode: "0644"
+
+- name: Render Ingress
+  ansible.builtin.template:
+    src: ing.yaml.j2
+    dest: "{{ lookup('env', 'PWD') }}/artifacts/manifests/ing.yaml"
+    mode: "0644"
+
+- name: Apply manifests (idempotent)
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig_path | default(omit) }}"
+    state: present
+    src: "{{ item }}"
+  loop:
+    - "{{ lookup('env', 'PWD') }}/artifacts/manifests/cm-index.yaml"
+    - "{{ lookup('env', 'PWD') }}/artifacts/manifests/deploy.yaml"
+    - "{{ lookup('env', 'PWD') }}/artifacts/manifests/svc.yaml"
+    - "{{ lookup('env', 'PWD') }}/artifacts/manifests/ing.yaml"
+
+- name: Wait for demo deployment rollout
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ kubeconfig_path | default(omit) }}"
+    api_version: apps/v1
+    kind: Deployment
+    name: demo-nginx
+    namespace: "{{ demo_namespace }}"
+  register: demo_deploy
+  until:
+    - demo_deploy.resources | length == 1
+    - demo_deploy.resources[0].status is defined
+    - (demo_deploy.resources[0].status.conditions | default([]))
+      | selectattr('type', 'equalto', 'Available')
+      | selectattr('status', 'equalto', 'True')
+      | list
+      | length > 0
+  retries: 30
+  delay: 10
+  changed_when: false

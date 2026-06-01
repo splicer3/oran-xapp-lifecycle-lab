@@ -1,0 +1,2 @@
+[k3s_master]
+ric-single ansible_host=YOUR_VM_IP ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/id_rsa

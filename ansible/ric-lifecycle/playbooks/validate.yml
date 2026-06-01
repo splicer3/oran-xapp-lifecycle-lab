@@ -1,0 +1,382 @@
+---
+- name: Validate single-VM Near-RT RIC deployment
+  hosts: ric_vm
+  gather_facts: true
+  tasks:
+    - name: Load experiment default variables for standalone validate runs
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../group_vars/all.yml"
+        name: validate_defaults
+
+    - name: Resolve validation variables with fallback defaults
+      ansible.builtin.set_fact:
+        e2sim_mode: "{{ e2sim_mode | default(validate_defaults.e2sim_mode) }}"
+        ric_namespaces: "{{ ric_namespaces | default(validate_defaults.ric_namespaces) }}"
+        ric_validate_pod_minimum: "{{ ric_validate_pod_minimum | default(validate_defaults.ric_validate_pod_minimum) }}"
+        k3s_kubeconfig: "{{ k3s_kubeconfig | default((ansible_facts.user_dir | default('/home/' ~ ansible_facts.user_id)) ~ '/.kube/config') }}"
+        istio_enabled: "{{ istio_enabled | default(validate_defaults.istio_enabled) }}"
+        istio_namespace: "{{ istio_namespace | default(validate_defaults.istio_namespace) }}"
+        istio_target_namespaces: "{{ istio_target_namespaces | default(validate_defaults.istio_target_namespaces) }}"
+        istio_sidecar_name: "{{ istio_sidecar_name | default(validate_defaults.istio_sidecar_name) }}"
+        istio_install_addons: "{{ istio_install_addons | default(validate_defaults.istio_install_addons) }}"
+        istio_addon_deployments: "{{ istio_addon_deployments | default(validate_defaults.istio_addon_deployments) }}"
+        ric_e2term_expose_enabled: "{{ ric_e2term_expose_enabled | default(validate_defaults.ric_e2term_expose_enabled) }}"
+        ric_e2term_namespace: "{{ ric_e2term_namespace | default(validate_defaults.ric_e2term_namespace) }}"
+        ric_e2term_nodeport_service_name: "{{ ric_e2term_nodeport_service_name | default(validate_defaults.ric_e2term_nodeport_service_name) }}"
+        ric_e2term_nodeport: "{{ ric_e2term_nodeport | default(validate_defaults.ric_e2term_nodeport) }}"
+        ric_e2term_target_port: "{{ ric_e2term_target_port | default(validate_defaults.ric_e2term_target_port) }}"
+        ric_e2term_external_ip: "{{ ric_e2term_external_ip | default(validate_defaults.ric_e2term_external_ip) }}"
+        xapp_install_namespace: "{{ xapp_install_namespace | default(validate_defaults.xapp_install_namespace) }}"
+        xapp_name_match_regex: "{{ xapp_name_match_regex | default(xapp_name | default('kpimon-go')) }}"
+        xapp_image: "{{ xapp_image | default(validate_defaults.xapp_image) }}"
+        e2sim_container_name: "{{ e2sim_container_name | default(validate_defaults.e2sim_container_name) }}"
+
+    - name: Validate e2sim mode
+      ansible.builtin.assert:
+        that:
+          - e2sim_mode in ['e2sim-ready', 'fully-functional']
+        fail_msg: "Invalid e2sim_mode '{{ e2sim_mode }}'. Allowed values: e2sim-ready, fully-functional"
+
+    - name: Gather required namespaces
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ k3s_kubeconfig }}"
+        api_version: v1
+        kind: Namespace
+        name: "{{ item }}"
+      loop: "{{ ric_namespaces }}"
+      register: validate_namespaces
+      changed_when: false
+
+    - name: Assert required namespaces exist
+      ansible.builtin.assert:
+        that:
+          - (item.resources | length) == 1
+        fail_msg: "Required namespace '{{ item.item }}' is missing"
+      loop: "{{ validate_namespaces.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Gather pods for required namespaces
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ k3s_kubeconfig }}"
+        api_version: v1
+        kind: Pod
+        namespace: "{{ item }}"
+      loop: "{{ ric_namespaces }}"
+      register: validate_ns_pods
+      changed_when: false
+
+    - name: Assert namespace pods are healthy
+      ansible.builtin.assert:
+        that:
+          - (item.resources | length) >= (ric_validate_pod_minimum | int)
+          - >-
+            (
+              item.resources
+              | rejectattr('status.phase', 'equalto', 'Running')
+              | rejectattr('status.phase', 'equalto', 'Succeeded')
+              | list
+              | length
+            ) == 0
+        fail_msg: "Namespace '{{ item.item }}' has non-running pods or no pods"
+      loop: "{{ validate_ns_pods.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Check kube-system pods for Traefik
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ k3s_kubeconfig }}"
+        api_version: v1
+        kind: Pod
+        namespace: kube-system
+      register: validate_kube_system_pods
+      changed_when: false
+
+    - name: Assert Traefik is not present
+      ansible.builtin.assert:
+        that:
+          - >-
+            (
+              validate_kube_system_pods.resources
+              | selectattr('metadata.name', 'search', 'traefik')
+              | list
+              | length
+            ) == 0
+        fail_msg: "Traefik pods were found, but this experiment requires Traefik disabled"
+
+    - name: Gather istio-system namespace
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ k3s_kubeconfig }}"
+        api_version: v1
+        kind: Namespace
+        name: "{{ istio_namespace }}"
+      register: validate_istio_namespace
+      when: istio_enabled | bool
+      changed_when: false
+
+    - name: Assert istio-system namespace exists
+      ansible.builtin.assert:
+        that:
+          - (validate_istio_namespace.resources | length) == 1
+        fail_msg: "Istio is enabled but namespace '{{ istio_namespace }}' does not exist"
+      when: istio_enabled | bool
+
+    - name: Gather istiod deployment
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ k3s_kubeconfig }}"
+        api_version: apps/v1
+        kind: Deployment
+        namespace: "{{ istio_namespace }}"
+        name: istiod
+      register: validate_istiod_deploy
+      when: istio_enabled | bool
+      changed_when: false
+
+    - name: Assert istiod deployment is available
+      ansible.builtin.assert:
+        that:
+          - (validate_istiod_deploy.resources | length) == 1
+          - (validate_istiod_deploy.resources[0].status.availableReplicas | default(0) | int) > 0
+        fail_msg: "Istio control plane is not ready: istiod unavailable"
+      when: istio_enabled | bool
+
+    - name: Gather Istio ingress gateway deployment (minimal profile check)
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ k3s_kubeconfig }}"
+        api_version: apps/v1
+        kind: Deployment
+        namespace: "{{ istio_namespace }}"
+        name: istio-ingressgateway
+      register: validate_istio_ingress
+      when: istio_enabled | bool
+      failed_when: false
+      changed_when: false
+
+    - name: Assert no Istio ingress gateway deployment exists
+      ansible.builtin.assert:
+        that:
+          - (validate_istio_ingress.resources | default([]) | length) == 0
+        fail_msg: "Minimal Istio profile expected no ingress gateway, but istio-ingressgateway exists"
+      when: istio_enabled | bool
+
+    - name: Gather Istio target namespaces
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ k3s_kubeconfig }}"
+        api_version: v1
+        kind: Namespace
+        name: "{{ item }}"
+      loop: "{{ istio_target_namespaces }}"
+      register: validate_istio_target_namespaces
+      when: istio_enabled | bool
+      changed_when: false
+
+    - name: Assert Istio injection label on target namespaces
+      ansible.builtin.assert:
+        that:
+          - (item.resources | length) == 1
+          - (item.resources[0].metadata.labels['istio-injection'] | default('')) == 'enabled'
+        fail_msg: "Namespace '{{ item.item }}' is missing label istio-injection=enabled"
+      loop: "{{ validate_istio_target_namespaces.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when: istio_enabled | bool
+
+    - name: Check sidecar injection status in target namespaces
+      ansible.builtin.shell: |
+        set -euo pipefail
+        k3s kubectl -n {{ item }} get pods -o json | jq -r '
+              [ .items[]
+                | select(.metadata.ownerReferences and (.metadata.ownerReferences | length > 0))
+                | select(.metadata.ownerReferences[0].kind == "ReplicaSet" or .metadata.ownerReferences[0].kind == "StatefulSet")
+              ] as $pods
+              | {
+                  missing_proxy: ([$pods[] | select(.metadata.annotations["sidecar.istio.io/status"] == null)] | length),
+                  non_running: ([$pods[] | select(.status.phase != "Running")] | length)
+                }
+              | "\(.missing_proxy) \(.non_running)"'
+      args:
+        executable: /bin/bash
+      environment:
+        KUBECONFIG: "{{ k3s_kubeconfig }}"
+      loop: "{{ istio_target_namespaces }}"
+      register: validate_istio_sidecar
+      when: istio_enabled | bool
+      changed_when: false
+
+    - name: Assert sidecar injection on target namespace workloads
+      ansible.builtin.assert:
+        that:
+          - (item.stdout.split()[0] | int) == 0
+          - (item.stdout.split()[1] | int) == 0
+        fail_msg: >-
+          Namespace '{{ item.item }}' has workloads missing sidecars or not running:
+          missing_proxy={{ item.stdout.split()[0] }}, non_running={{ item.stdout.split()[1] }}
+      loop: "{{ validate_istio_sidecar.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when: istio_enabled | bool
+
+    - name: Gather Istio addon deployments
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ k3s_kubeconfig }}"
+        api_version: apps/v1
+        kind: Deployment
+        namespace: "{{ istio_namespace }}"
+        name: "{{ item }}"
+      loop: "{{ istio_addon_deployments }}"
+      register: validate_istio_addons
+      when:
+        - istio_enabled | bool
+        - istio_install_addons | bool
+      changed_when: false
+
+    - name: Assert Istio addon deployments are available
+      ansible.builtin.assert:
+        that:
+          - (item.resources | length) == 1
+          - (item.resources[0].status.availableReplicas | default(0) | int) > 0
+        fail_msg: "Istio addon '{{ item.item }}' is not available"
+      loop: "{{ validate_istio_addons.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when:
+        - istio_enabled | bool
+        - istio_install_addons | bool
+
+    - name: Gather e2term NodePort service
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ k3s_kubeconfig }}"
+        api_version: v1
+        kind: Service
+        namespace: "{{ ric_e2term_namespace }}"
+        name: "{{ ric_e2term_nodeport_service_name }}"
+      register: validate_e2term_service
+      when: ric_e2term_expose_enabled | bool
+      changed_when: false
+
+    - name: Build e2term port summary
+      ansible.builtin.set_fact:
+        validate_e2term_ports: >-
+          {{
+            validate_e2term_service.resources[0].spec.ports
+            if (validate_e2term_service.resources | length) > 0
+            else []
+          }}
+        validate_e2term_sctp_ports: >-
+          {{
+            (
+              validate_e2term_service.resources[0].spec.ports
+              if (validate_e2term_service.resources | length) > 0
+              else []
+            )
+            | selectattr('protocol', 'equalto', 'SCTP')
+            | list
+          }}
+        validate_e2term_external_ips: >-
+          {{
+            validate_e2term_service.resources[0].spec.externalIPs
+            if (
+              (validate_e2term_service.resources | length) > 0
+              and (validate_e2term_service.resources[0].spec.externalIPs is defined)
+            )
+            else []
+          }}
+      when: ric_e2term_expose_enabled | bool
+
+    - name: Assert e2term NodePort mapping
+      ansible.builtin.assert:
+        that:
+          - (validate_e2term_service.resources | length) == 1
+          - validate_e2term_service.resources[0].spec.type == 'NodePort'
+          - (ric_e2term_nodeport | string) in (validate_e2term_sctp_ports | map(attribute='nodePort') | map('string') | list)
+          - (ric_e2term_target_port | string) in (validate_e2term_sctp_ports | map(attribute='targetPort') | map('string') | list)
+          - >-
+            (ric_e2term_external_ip | default('') | length == 0)
+            or
+            (ric_e2term_external_ip in validate_e2term_external_ips)
+        fail_msg: >-
+          e2term NodePort validation failed. Expected SCTP nodePort {{ ric_e2term_nodeport }}
+          -> targetPort {{ ric_e2term_target_port }} and expected external IP
+          '{{ ric_e2term_external_ip | default('') }}' when configured.
+      when: ric_e2term_expose_enabled | bool
+
+    - name: Report skipped e2term exposure validation
+      ansible.builtin.debug:
+        msg: "ric_e2term_expose_enabled=false: skipping e2term mirror service validation."
+      when: not (ric_e2term_expose_enabled | bool)
+
+    - name: Gather xApp deployments
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ k3s_kubeconfig }}"
+        api_version: apps/v1
+        kind: Deployment
+        namespace: "{{ xapp_install_namespace }}"
+      register: validate_xapp_deployments
+      changed_when: false
+
+    - name: Build xApp deployment and image summary
+      ansible.builtin.set_fact:
+        validate_xapp_matches: >-
+          {{
+            validate_xapp_deployments.resources
+            | selectattr('metadata.name', 'search', xapp_name_match_regex)
+            | list
+          }}
+        validate_xapp_images: >-
+          {{
+            validate_xapp_deployments.resources
+            | selectattr('metadata.name', 'search', xapp_name_match_regex)
+            | map(attribute='spec.template.spec.containers')
+            | list
+            | flatten
+            | map(attribute='image')
+            | list
+          }}
+        validate_xapp_expected_image_stripped: "{{ xapp_image | regex_replace('^docker\\.io/', '') }}"
+        validate_xapp_expected_image_variants:
+          - "{{ xapp_image | regex_replace('^docker\\.io/', '') }}"
+          - "docker.io/{{ xapp_image | regex_replace('^docker\\.io/', '') }}"
+
+    - name: Build xApp actual image variants
+      ansible.builtin.set_fact:
+        validate_xapp_actual_image_variants: >-
+          {{
+            (
+              validate_xapp_images
+              + (validate_xapp_images | map('regex_replace', '^docker\\.io/', '') | list)
+            ) | unique
+          }}
+
+    - name: Assert xApp deployment image
+      ansible.builtin.assert:
+        that:
+          - (validate_xapp_matches | length) > 0
+          - >-
+            (
+              validate_xapp_expected_image_variants
+              | intersect(validate_xapp_actual_image_variants)
+              | length
+            ) > 0
+        fail_msg: >-
+          xApp image validation failed. Expected image variants {{ validate_xapp_expected_image_variants }},
+          found {{ validate_xapp_images | default([]) }}.
+
+    - name: Gather e2sim container state
+      community.docker.docker_container_info:
+        name: "{{ e2sim_container_name }}"
+      register: validate_e2sim
+      when: e2sim_mode == 'fully-functional'
+      changed_when: false
+
+    - name: Assert e2sim is running in fully-functional mode
+      ansible.builtin.assert:
+        that:
+          - validate_e2sim.exists
+          - validate_e2sim.container.State.Running
+        fail_msg: "fully-functional mode requires a running e2sim container"
+      when: e2sim_mode == 'fully-functional'
+
+    - name: Report e2sim status in e2sim-ready mode
+      ansible.builtin.debug:
+        msg: "e2sim-ready mode selected: e2sim runtime is optional and not required for validation."
+      when: e2sim_mode == 'e2sim-ready'

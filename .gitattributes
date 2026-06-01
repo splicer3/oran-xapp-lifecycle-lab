@@ -1,0 +1,43 @@
+# ------------------------
+# Default: normalize line endings
+# ------------------------
+* text=auto eol=lf
+
+# ------------------------
+# YAML / Ansible
+# ------------------------
+*.yml  text eol=lf diff=yaml
+*.yaml text eol=lf diff=yaml
+
+# ------------------------
+# Markdown / Docs
+# ------------------------
+*.md   text eol=lf diff=markdown
+*.txt  text eol=lf
+
+# ------------------------
+# Templates
+# ------------------------
+*.j2   text eol=lf
+*.tpl  text eol=lf
+
+# ------------------------
+# Code
+# ------------------------
+*.py   text eol=lf diff=python
+*.sh   text eol=lf
+
+# ------------------------
+# Configs
+# ------------------------
+*.ini  text eol=lf
+*.cfg  text eol=lf
+*.conf text eol=lf
+
+# ------------------------
+# Binary / Skip diff
+# ------------------------
+*.box  binary
+*.crt  binary
+*.key  binary
+*.pem  binary

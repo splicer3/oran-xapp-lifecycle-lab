@@ -1,0 +1,160 @@
+---
+# Deployment mode controls
+# Allowed values: e2sim-ready, fully-functional
+e2sim_mode: "fully-functional"
+
+# Near-RT RIC and workload defaults
+ric_release_branch: "j-release"
+ric_namespaces:
+  - ricplt
+  - ricinfra
+  - ricxapp
+ric_platform_namespaces:
+  - ricplt
+  - ricinfra
+ric_e2term_nodeport: 32222
+xapp_image: "splicer3/kpi-mon-xapp:1.0.1"
+e2sim_image: "splicer3/e2sim:latest"
+
+# Idempotency controls
+force_ric_reinstall: false
+force_xapp_reinstall: false
+
+# K3s
+target_os_family: "Debian"
+k3s_channel: "stable"
+k3s_system_kubeconfig: "/etc/rancher/k3s/k3s.yaml"
+k3s_kubeconfig: "{{ ansible_facts.user_dir }}/.kube/config"
+k3s_config_file: "/etc/rancher/k3s/config.yaml"
+k3s_write_kubeconfig_mode: "0600"
+k3s_disable_components:
+  - traefik
+
+# Docker host setup
+docker_common_packages:
+  - python3-pip
+docker_engine_packages:
+  - docker.io
+# Used only if primary engine packages fail (for example docker.io vs containerd.io conflicts).
+docker_engine_fallback_packages:
+  - docker-ce
+  - docker-ce-cli
+  - containerd.io
+docker_python_packages:
+  - docker
+  - kubernetes
+  - openshift
+  - pyyaml
+
+# Istio minimal profile + quick-start addons
+istio_enabled: true
+istio_version: "1.28.3"
+istio_addons_release: "release-1.28"
+istio_profile: "minimal"
+istio_install_addons: true
+istio_target_namespaces:
+  - ricplt
+  - ricinfra
+  - ricxapp
+istio_namespace: "istio-system"
+istio_sidecar_name: "istio-proxy"
+istioctl_bin_path: "{{ ansible_facts.user_dir }}/.local/bin/istioctl"
+istio_download_base_url: "https://github.com/istio/istio/releases/download"
+istio_download_dir: "{{ ansible_facts.user_dir }}/tmp/istio-download"
+istio_addons_manifest_dir: "{{ ansible_facts.user_dir }}/tmp/istio-addons"
+istio_addons_manifest_urls:
+  prometheus: "https://raw.githubusercontent.com/istio/istio/{{ istio_addons_release }}/samples/addons/prometheus.yaml"
+  grafana: "https://raw.githubusercontent.com/istio/istio/{{ istio_addons_release }}/samples/addons/grafana.yaml"
+  kiali: "https://raw.githubusercontent.com/istio/istio/{{ istio_addons_release }}/samples/addons/kiali.yaml"
+istio_addon_deployments:
+  - prometheus
+  - grafana
+  - kiali
+istio_wait_retries: 60
+istio_wait_delay: 10
+force_istio_reinstall: false
+
+# RIC J deployment
+ric_dep_repo_url: "https://github.com/o-ran-sc/ric-plt-ric-dep.git"
+ric_dep_dest: "{{ ansible_facts.user_dir }}/ric-dep"
+ric_dep_git_force_update: true
+ric_recipe_candidates:
+  - "RECIPE_EXAMPLE/example_recipe_oran_j_release.yaml"
+  - "RECIPE_EXAMPLE/example_recipe_latest_stable.yaml"
+ric_install_timeout: 7200
+ric_wait_retries: 60
+ric_wait_delay: 15
+ric_validate_pod_minimum: 1
+helm_version: "v3.16.4"
+helm_bin_path: "{{ ansible_facts.user_dir }}/.local/bin/helm"
+helm_download_base_url: "https://get.helm.sh"
+helm_download_dir: "{{ ansible_facts.user_dir }}/tmp/helm-download"
+ric_common_chartmuseum_container_name: "ric-common-chartmuseum"
+ric_common_chartmuseum_image: "ghcr.io/helm/chartmuseum:v0.14.0"
+ric_common_chartmuseum_bind_address: "127.0.0.1"
+ric_common_chartmuseum_port: 8879
+ric_common_chartmuseum_storage_dir: "{{ ansible_facts.user_dir }}/.cache/helm/repository/local"
+
+# E2Term SCTP NodePort exposure
+ric_e2term_expose_enabled: false
+ric_e2term_namespace: "ricplt"
+ric_e2term_source_service_match: "e2term-alpha"
+ric_e2term_source_deployment_name: "deployment-ricplt-e2term-alpha"
+ric_e2term_nodeport_service_name: "sctp-service"
+ric_e2term_target_port: 36422
+ric_e2term_service_port: 36422
+ric_e2term_external_ip: ""
+
+# xApp onboarding and deployment
+chartmuseum_container_name: "ric-chartmuseum"
+chartmuseum_image: "ghcr.io/helm/chartmuseum:v0.14.0"
+chartmuseum_storage_dir: "{{ ansible_facts.user_dir }}/chartmuseum/charts"
+chartmuseum_port: 8090
+chartmuseum_bind_address: "0.0.0.0"
+chartmuseum_repo_url: "http://127.0.0.1:{{ chartmuseum_port }}"
+
+xapp_workspace: "{{ ansible_facts.user_dir }}/xapps/kpimon"
+xapp_config_file_remote: "{{ xapp_workspace }}/config-file.json"
+xapp_schema_file_remote: "{{ xapp_workspace }}/schema.json"
+xapp_name: "kpimon-go"
+xapp_chart_name: "kpimon-go"
+xapp_chart_version: "2.0.2-alpha"
+xapp_install_namespace: "ricxapp"
+xapp_name_match_regex: "{{ xapp_install_namespace }}-kpimon-go"
+xapp_descriptor_version: "2.0.2-alpha"
+xapp_dms_cli_repo_url: "https://github.com/o-ran-sc/ric-plt-appmgr.git"
+xapp_dms_cli_repo_dest: "{{ ansible_facts.user_dir }}/ric-plt-appmgr"
+xapp_dms_cli_workdir: "{{ xapp_dms_cli_repo_dest }}/xapp_orchestrater/dev/xapp_onboarder"
+xapp_dms_cli_venv_dir: "{{ xapp_dms_cli_workdir }}/.venv"
+xapp_dms_cli_python_version: "3.9"
+xapp_dms_cli_setuptools_version: "70.0.0"
+xapp_dms_cli_override: ""
+xapp_dms_cli_install_search_glob: "dms_cli"
+xapp_onboard_command_override: ""
+xapp_install_command_override: ""
+xapp_download_helm_command_override: ""
+xapp_chart_package_path: "{{ xapp_workspace }}/{{ xapp_chart_name }}-{{ xapp_chart_version }}.tgz"
+xapp_wait_retries: 40
+xapp_wait_delay: 15
+
+# Optional e2sim container
+e2sim_container_name: "e2sim"
+e2sim_restart_policy: "always"
+e2sim_network_mode: "host"
+e2sim_pull: true
+e2sim_container_command: ""
+e2sim_env:
+  RAN_FUNC_ID: "2"
+  REPORTS_RESTART_SLEEP_MS: "50"
+  REPORTS_SEND_GAP_MS: "50"
+e2sim_ready_retries: 20
+e2sim_ready_delay: 3
+
+# Reset controls
+reset_remove_ric: true
+reset_remove_istio: true
+reset_remove_istio_addons: true
+reset_remove_istio_namespace: true
+reset_uninstall_k3s: false
+reset_confirm_uninstall_k3s: "NO"
+reset_k3s_confirmation_phrase: "YES_UNINSTALL_K3S"

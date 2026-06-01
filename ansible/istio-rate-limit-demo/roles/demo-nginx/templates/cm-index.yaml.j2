@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo-index
+  namespace: {{ demo_namespace }}
+data:
+  index.html: |
+    <!doctype html>
+    <html>
+    <head><meta charset="utf-8"><title>Demo</title></head>
+    <body style="font-family: sans-serif;">
+      <h1>Pod Name: ${MY_POD_NAME}</h1>
+      <p>This page is rendered from a ConfigMap template using the Downward API.</p>
+    </body>
+    </html>

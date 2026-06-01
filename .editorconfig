@@ -1,0 +1,55 @@
+# EditorConfig for cross-IDE compatibility
+root = true
+
+# ------------------------
+# Defaults (all files)
+# ------------------------
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+# ------------------------
+# YAML / Ansible / JSON
+# ------------------------
+[*.{yml,yaml,json}]
+indent_style = space
+indent_size = 2
+
+# ------------------------
+# Jinja2 templates
+# ------------------------
+[*.j2]
+indent_style = space
+indent_size = 2
+
+# ------------------------
+# Markdown / Docs
+# ------------------------
+[*.md]
+indent_style = space
+indent_size = 2
+trim_trailing_whitespace = false   # allow trailing spaces for MD line breaks
+
+# ------------------------
+# Python
+# ------------------------
+[*.py]
+indent_style = space
+indent_size = 4
+max_line_length = 88
+
+# ------------------------
+# Shell scripts
+# ------------------------
+[*.sh]
+indent_style = space
+indent_size = 2
+
+# ------------------------
+# INI / CFG files
+# ------------------------
+[*.{ini,cfg,conf}]
+indent_style = space
+indent_size = 2

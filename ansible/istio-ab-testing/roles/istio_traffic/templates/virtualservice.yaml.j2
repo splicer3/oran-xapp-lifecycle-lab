@@ -1,0 +1,41 @@
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: {{ service_name }}-vs
+  namespace: {{ namespace }}
+spec:
+  hosts:
+    - {{ service_host }}
+{% set weight = primary_weight %}
+{% set tcp_rules = tcp_ports | default([]) %}
+{% if tcp_rules %}
+  tcp:
+{%   for rule in tcp_rules %}
+    - match:
+        - port: {{ rule.port }}
+      route:
+        - destination:
+            host: {{ service_host }}
+            subset: {{ rule.primary_version | default(primary_version) }}
+            port:
+              number: {{ rule.port }}
+          weight: {{ rule.primary_weight | default(weight) }}
+        - destination:
+            host: {{ service_host }}
+            subset: {{ rule.secondary_version | default(secondary_version) }}
+            port:
+              number: {{ rule.port }}
+          weight: {{ 100 - (rule.primary_weight | default(weight)) }}
+{%   endfor %}
+{% else %}
+  tcp:
+    - route:
+      - destination:
+          host: {{ service_host }}
+          subset: {{ primary_version }}
+        weight: {{ weight }}
+      - destination:
+          host: {{ service_host }}
+          subset: {{ secondary_version }}
+        weight: {{ 100 - weight }}
+{% endif %}

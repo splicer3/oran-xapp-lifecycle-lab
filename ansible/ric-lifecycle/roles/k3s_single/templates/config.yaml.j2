@@ -1,0 +1,11 @@
+write-kubeconfig-mode: "{{ k3s_write_kubeconfig_mode }}"
+disable:
+{% for component in k3s_disable_components %}
+  - "{{ component }}"
+{% endfor %}
+{% if k3s_tls_sans is defined and (k3s_tls_sans | length) > 0 %}
+tls-san:
+{% for san in k3s_tls_sans %}
+  - "{{ san }}"
+{% endfor %}
+{% endif %}

@@ -1,0 +1,68 @@
+---
+- name: Ensure supported OS family
+  ansible.builtin.assert:
+    that:
+      - ansible_os_family == target_os_family
+    fail_msg: "This role currently supports Ubuntu/Debian hosts only. Found: {{ ansible_os_family }}"
+
+- name: Check whether Docker CLI is already available
+  ansible.builtin.command: command -v docker
+  register: docker_cli_check
+  changed_when: false
+  failed_when: false
+
+- name: Install common Python prerequisites
+  ansible.builtin.apt:
+    name: "{{ docker_common_packages }}"
+    state: present
+    update_cache: true
+
+- name: Install Docker engine packages when Docker is missing
+  when: docker_cli_check.rc != 0
+  block:
+    - name: Install primary Docker engine packages
+      ansible.builtin.apt:
+        name: "{{ docker_engine_packages }}"
+        state: present
+        update_cache: true
+  rescue:
+    - name: Install fallback Docker engine packages
+      ansible.builtin.apt:
+        name: "{{ docker_engine_fallback_packages }}"
+        state: present
+        update_cache: true
+      when: (docker_engine_fallback_packages | length) > 0
+
+    - name: Fail when Docker install fallback is not configured
+      ansible.builtin.fail:
+        msg: >-
+          Docker engine installation failed using primary packages ({{ docker_engine_packages }}),
+          and no fallback package list is configured. Set docker_engine_fallback_packages
+          to a valid list for this host.
+      when: (docker_engine_fallback_packages | length) == 0
+
+- name: Log Docker package installation skip when already present
+  ansible.builtin.debug:
+    msg: "Docker CLI already present on target host; skipping Docker package installation."
+  when: docker_cli_check.rc == 0
+
+- name: Install Python libraries for Docker/Kubernetes Ansible modules
+  block:
+    - name: Install Python libraries (externally managed environment compatible)
+      ansible.builtin.pip:
+        name: "{{ docker_python_packages }}"
+        state: present
+        executable: pip3
+        extra_args: --break-system-packages
+  rescue:
+    - name: Install Python libraries (fallback)
+      ansible.builtin.pip:
+        name: "{{ docker_python_packages }}"
+        state: present
+        executable: pip3
+
+- name: Ensure Docker service is enabled and running
+  ansible.builtin.systemd:
+    name: docker
+    state: started
+    enabled: true

@@ -1,0 +1,70 @@
+---
+# 1) Read SSH public key for passwordless SSH
+- name: Read public key to authorize on VMs
+  hosts: localhost
+  gather_facts: false
+  vars:
+    _default_key: "{{ lookup('env','HOME') + '/.ssh/id_rsa.pub' }}"
+    _fallback_key: "{{ lookup('env','HOME') + '/.ssh/id_ed25519.pub' }}"
+  tasks:
+    - name: Stat default SSH public key
+      ansible.builtin.stat:
+        path: "{{ _default_key }}"
+      register: ed
+
+    - name: Stat fallback SSH public key
+      ansible.builtin.stat:
+        path: "{{ _fallback_key }}"
+      register: rs
+      when: not ed.stat.exists
+
+    - name: Fail if no SSH public key found
+      ansible.builtin.fail:
+        msg: >-
+          No SSH public key found at {{ _default_key }} or {{ _fallback_key }}.
+          Create one with ssh-keygen and retry.
+      when: not ed.stat.exists and (rs is not defined or not rs.stat.exists)
+
+    - name: Read selected pubkey
+      ansible.builtin.slurp:
+        path: "{{ ed.stat.exists | ternary(_default_key, _fallback_key) }}"
+      register: mac_key_raw
+
+    - name: Set fact mac_pubkey
+      ansible.builtin.set_fact:
+        mac_pubkey: "{{ mac_key_raw.content | b64decode | trim }}"
+
+# 2) Ensure Vagrant, plugins, Vagrantfile; bring VMs up
+- name: Provision VirtualBox VMs via Vagrant on hypervisor
+  hosts: hypervisor
+  become: true
+  vars:
+    mac_pubkey: "{{ hostvars['localhost']['mac_pubkey'] }}"
+  roles:
+    - vagrant-vms
+
+# 3) Wait until VMs are reachable via Vagrant SSH
+- name: Verify VMs are accessible via Vagrant
+  hosts: hypervisor
+  become: true
+  gather_facts: false
+  vars:
+    vm_names:
+      - "master01"
+      - "worker01"
+  tasks:
+    - name: Check VM status using vagrant
+      ansible.builtin.command:
+        cmd: vagrant status {{ item }}
+        chdir: "{{ vagrant_project_dir }}"
+      register: vm_status
+      changed_when: false
+      loop: "{{ vm_names }}"
+
+    - name: Verify VMs are running
+      ansible.builtin.command:
+        cmd: vagrant ssh {{ item }} -c "echo 'SSH connection successful'"
+        chdir: "{{ vagrant_project_dir }}"
+      register: ssh_test
+      changed_when: false
+      loop: "{{ vm_names }}"

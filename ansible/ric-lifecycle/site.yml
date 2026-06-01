@@ -1,0 +1,30 @@
+---
+- name: Deploy single-VM K3s + Near-RT RIC J + optional e2sim
+  hosts: ric_vm
+  gather_facts: true
+  pre_tasks:
+    - name: Validate e2sim mode
+      ansible.builtin.assert:
+        that:
+          - e2sim_mode in ['e2sim-ready', 'fully-functional']
+        fail_msg: "Invalid e2sim_mode '{{ e2sim_mode }}'. Allowed values: e2sim-ready, fully-functional"
+  roles:
+    - role: k3s_single
+      become: true
+    - role: docker_host
+      become: true
+    - role: istio_minimal
+      when: istio_enabled | bool
+    - role: istio_addons
+      when:
+        - istio_enabled | bool
+        - istio_install_addons | bool
+    - role: ric_j_deploy
+    - role: e2term_expose
+      when: ric_e2term_expose_enabled | bool
+    - role: e2sim_docker
+      when: e2sim_mode == 'fully-functional'
+    - role: xapp_kpimon_deploy
+
+- name: Validate deployed stack
+  import_playbook: playbooks/validate.yml

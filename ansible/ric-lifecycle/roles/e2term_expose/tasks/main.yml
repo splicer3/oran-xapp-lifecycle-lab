@@ -1,0 +1,112 @@
+---
+- name: Gather source e2term deployment
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ k3s_kubeconfig }}"
+    api_version: apps/v1
+    kind: Deployment
+    namespace: "{{ ric_e2term_namespace }}"
+    name: "{{ ric_e2term_source_deployment_name }}"
+  register: ric_e2term_deployment
+  failed_when: false
+  changed_when: false
+
+- name: Select e2term selector from deployment
+  ansible.builtin.set_fact:
+    ric_e2term_selector: >-
+      {{
+        (
+          ric_e2term_deployment.resources[0].spec.selector.matchLabels
+          if (
+            (ric_e2term_deployment.resources | default([]) | length) > 0
+            and (ric_e2term_deployment.resources[0].spec.selector.matchLabels is defined)
+          )
+          else {}
+        )
+      }}
+    ric_e2term_source_description: "deployment/{{ ric_e2term_source_deployment_name }}"
+
+- name: Gather services in RIC platform namespace when deployment selector is unavailable
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ k3s_kubeconfig }}"
+    api_version: v1
+    kind: Service
+    namespace: "{{ ric_e2term_namespace }}"
+  register: ric_services
+  changed_when: false
+  when: ric_e2term_selector | length == 0
+
+- name: Select exact source service match
+  ansible.builtin.set_fact:
+    ric_e2term_exact_candidates: >-
+      {{
+        ric_services.resources
+        | selectattr('metadata.name', 'equalto', ric_e2term_source_service_match)
+        | list
+      }}
+  when: ric_e2term_selector | length == 0
+
+- name: Select fallback source service candidates
+  ansible.builtin.set_fact:
+    ric_e2term_fallback_candidates: >-
+      {{
+        ric_services.resources
+        | selectattr('metadata.name', 'search', ric_e2term_source_service_match)
+        | list
+      }}
+  when: ric_e2term_selector | length == 0
+
+- name: Pick fallback source service that has a selector
+  ansible.builtin.set_fact:
+    ric_e2term_source_service: >-
+      {{
+        (
+        ric_e2term_exact_candidates
+        | selectattr('spec.selector', 'defined')
+        | list
+        | first
+        )
+        | default(
+            (ric_e2term_fallback_candidates
+            | selectattr('spec.selector', 'defined')
+            | list
+            | first),
+            true
+          )
+        | default({})
+      }}
+  when: ric_e2term_selector | length == 0
+
+- name: Export e2term selector from fallback service
+  ansible.builtin.set_fact:
+    ric_e2term_selector: "{{ ric_e2term_source_service.spec.selector }}"
+    ric_e2term_source_description: "service/{{ ric_e2term_source_service.metadata.name }}"
+  when:
+    - ric_e2term_selector | length == 0
+    - ric_e2term_source_service is defined
+    - ric_e2term_source_service != {}
+
+- name: Fail when no e2term source selector can be identified
+  ansible.builtin.fail:
+    msg: >-
+      Could not identify an e2term selector in namespace {{ ric_e2term_namespace }}.
+      Checked deployment '{{ ric_e2term_source_deployment_name }}' and service match
+      '{{ ric_e2term_source_service_match }}'.
+  when: ric_e2term_selector | length == 0
+
+- name: Report selected source for mirror service
+  ansible.builtin.debug:
+    msg:
+      - "Selected source: {{ ric_e2term_source_description }}"
+      - "Mirror service to apply: {{ ric_e2term_nodeport_service_name }}"
+
+- name: Render e2term NodePort service manifest
+  ansible.builtin.template:
+    src: e2term-nodeport-sctp.yml.j2
+    dest: "{{ ansible_facts.user_dir }}/tmp/e2term-nodeport-sctp.yml"
+    mode: "0644"
+
+- name: Apply e2term NodePort service
+  kubernetes.core.k8s:
+    kubeconfig: "{{ k3s_kubeconfig }}"
+    state: present
+    src: "{{ ansible_facts.user_dir }}/tmp/e2term-nodeport-sctp.yml"

@@ -1,0 +1,50 @@
+kubeconfig: "{{ (ansible_user_dir | default('/home/' ~ (ansible_user | default('root')))) ~ '/.kube/config' }}"
+namespace: ricxapp
+tcp_ports:
+  - port: 4560
+  - port: 4561
+service_name: kpimon-go-rmr
+service_host: service-ricxapp-kpimon-go-rmr.ricxapp.svc.cluster.local
+versions: [v1, v2]
+# If true, each run randomly picks which version starts as primary.
+ab_randomize_start_version: true
+
+# kpimon A/B workload preparation
+kpimon_namespace: "{{ namespace }}"
+kpimon_app_label: ricxapp-kpimon-go
+kpimon_release_label: kpimon-go
+kpimon_v1_deployment_name: ricxapp-kpimon-go-v1
+kpimon_v2_deployment_name: ricxapp-kpimon-go-v2
+kpimon_v1_image: splicer3/kpi-mon-xapp:1.0.1
+kpimon_v2_image: splicer3/kpi-mon-xapp:1.0.1
+kpimon_base_target_replicas: 0
+kpimon_configmap_appenv: configmap-ricxapp-kpimon-go-appenv
+kpimon_configmap_appconfig: configmap-ricxapp-kpimon-go-appconfig
+kpimon_dbaas_configmap: dbaas-appconfig
+kpimon_image_pull_secret: docker-io
+
+# Placeholder gnb_id for future use
+gnb_id: 0011223344556677
+traffic_cycle_seconds: 120
+cycles: 4
+prometheus_url: http://localhost:9090
+prom_step: 15s
+# Set this to the Prometheus scrape interval for Istio metrics (Default 15s)
+prom_scrape_interval: 15s
+# Keep rate() window >= 2 samples for both query step and scrape interval.
+prom_range_window: >-
+  {{
+    (
+      [
+        (prom_step | regex_replace('s$', '') | int) * 2,
+        (prom_scrape_interval | regex_replace('s$', '') | int) * 2
+      ] | max
+    ) ~ 's'
+  }}
+prom_metric: istio_tcp_received_bytes_total
+prom_reporter: destination
+flip_drop_threshold: 1.0
+
+# Plotting controls on the Ansible controller host.
+plot_python_bin: python3
+plot_html_title: "A/B Testing Results"

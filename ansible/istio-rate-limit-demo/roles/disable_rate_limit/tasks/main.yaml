@@ -1,0 +1,9 @@
+---
+- name: Remove EnvoyFilter rate limiting
+  kubernetes.core.k8s:
+    kubeconfig: "{{ local_kubeconfig | default(omit) }}"
+    state: absent
+    api_version: networking.istio.io/v1alpha3
+    kind: EnvoyFilter
+    name: "{{ disable_rate_limit_envoyfilter_name }}"
+    namespace: "{{ disable_rate_limit_target_namespace }}"

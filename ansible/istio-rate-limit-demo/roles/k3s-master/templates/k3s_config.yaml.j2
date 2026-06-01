@@ -1,0 +1,34 @@
+# /etc/rancher/k3s/config.yaml
+write-kubeconfig-mode: "0644"
+{% if k3s_disable_traefik | default(true) %}
+disable:
+  - traefik
+{% endif %}
+token: "{{ k3s_token }}"
+# Prefer the host-only/bridged IP used by Ansible to reach the node
+node-ip: "{{ ansible_host | default(ansible_default_ipv4.address) }}"
+{% if vm_master_lan_ip is defined and vm_master_lan_ip %}
+# Also advertise the bridged LAN IP so clients outside the host-only network can reach NodePorts/LB
+node-external-ip: "{{ vm_master_lan_ip }}"
+{% endif %}
+tls-san:
+  - "{{ ansible_host | default(ansible_default_ipv4.address) }}"
+{% for san in k3s_tls_sans | default([]) %}
+  - "{{ san }}"
+{% endfor %}
+cluster-cidr: "{{ pod_cidr }}"
+service-cidr: "{{ service_cidr }}"
+
+# Ensure kubelet binds on node interface for 10250
+kubelet-arg:
+  - "address=0.0.0.0"
+  - "resolv-conf=/run/systemd/resolve/resolv.conf"
+
+# Prefer InternalIP for connecting to kubelets (logs/exec/attach)
+kube-apiserver-arg:
+  - "kubelet-preferred-address-types=InternalIP,Hostname,ExternalIP"
+
+# Pin flannel to the host-only interface for stable routing between nodes
+{% if k3s_flannel_iface is defined and k3s_flannel_iface %}
+flannel-iface: "{{ k3s_flannel_iface }}"
+{% endif %}

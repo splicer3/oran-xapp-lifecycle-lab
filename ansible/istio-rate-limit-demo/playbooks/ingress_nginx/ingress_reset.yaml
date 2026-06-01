@@ -1,0 +1,43 @@
+---
+- name: Remove demo resources
+  hosts: localhost
+  gather_facts: false
+  vars:
+    kubeconfig_path: "{{ lookup('env', 'PWD') }}/artifacts/kubeconfig"
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  tasks:
+    - name: Delete demo namespace (if exists)
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig_path | default(omit) }}"
+        api_version: v1
+        kind: Namespace
+        name: "{{ demo_namespace }}"
+        state: absent
+        wait: true
+        wait_timeout: 600
+
+- name: Uninstall ingress-nginx
+  hosts: localhost
+  gather_facts: false
+  vars:
+    kubeconfig_path: "{{ lookup('env', 'PWD') }}/artifacts/kubeconfig"
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  tasks:
+    - name: Remove ingress-nginx release if present
+      kubernetes.core.helm:
+        kubeconfig: "{{ kubeconfig_path | default(omit) }}"
+        name: "{{ ingress_release }}"
+        release_namespace: "{{ ingress_namespace }}"
+        state: absent
+
+    - name: Delete ingress namespace (optional)
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig_path | default(omit) }}"
+        api_version: v1
+        kind: Namespace
+        name: "{{ ingress_namespace }}"
+        state: absent
+        wait: true
+        wait_timeout: 600

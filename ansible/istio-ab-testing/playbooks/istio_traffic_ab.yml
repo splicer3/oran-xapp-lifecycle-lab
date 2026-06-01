@@ -1,0 +1,59 @@
+- name: Istio AB Traffic Play
+  hosts: k3s_master
+  vars_files:
+    - ../group_vars/all.yml
+  tasks:
+    - name: Capture traffic run start time
+      ansible.builtin.set_fact:
+        traffic_run_start: "{{ lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ') | trim }}"
+
+    - name: Ensure exactly two versions are configured
+      ansible.builtin.assert:
+        that:
+          - versions | length == 2
+        fail_msg: "This playbook expects exactly two versions in versions[]."
+
+    - name: Initialize flip metadata
+      ansible.builtin.set_fact:
+        flip_events: []
+
+    - name: Select version ordering for this run
+      ansible.builtin.set_fact:
+        selected_versions: "{{ (versions | shuffle) if (ab_randomize_start_version | bool) else versions }}"
+
+    - name: Set primary and secondary versions
+      ansible.builtin.set_fact:
+        primary_version: "{{ selected_versions[0] }}"
+        secondary_version: "{{ selected_versions[1] }}"
+
+    - name: Show selected start ordering
+      ansible.builtin.debug:
+        msg:
+          - "A/B start randomization enabled: {{ ab_randomize_start_version | bool }}"
+          - "Primary version: {{ primary_version }}"
+          - "Secondary version: {{ secondary_version }}"
+
+    - name: Apply DestinationRule
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        state: present
+        definition: "{{ lookup('template', '../roles/istio_traffic/templates/destinationrule.yaml.j2') }}"
+      run_once: true
+
+    - name: Alternate traffic weights
+      ansible.builtin.include_tasks: ../roles/istio_traffic/tasks/flip_pair.yml
+      loop: "{{ range(0, cycles) | list }}"
+      loop_control:
+        loop_var: cycle
+        label: "cycle {{ cycle }}"
+
+    - name: Capture traffic run end time
+      ansible.builtin.set_fact:
+        traffic_run_end: "{{ lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ') | trim }}"
+
+    - name: Expose run metadata for downstream plays
+      ansible.builtin.set_stats:
+        data:
+          traffic_run_start: "{{ traffic_run_start }}"
+          traffic_run_end: "{{ traffic_run_end }}"
+          flip_events: "{{ flip_events }}"

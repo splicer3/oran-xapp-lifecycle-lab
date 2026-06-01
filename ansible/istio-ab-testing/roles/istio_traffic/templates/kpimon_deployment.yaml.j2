@@ -1,0 +1,84 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ kpimon_variant.deployment_name }}
+  namespace: {{ kpimon_namespace }}
+  labels:
+    app: {{ kpimon_app_label }}
+    release: {{ kpimon_release_label }}
+    version: {{ kpimon_variant.version }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ kpimon_app_label }}
+      release: {{ kpimon_release_label }}
+      version: {{ kpimon_variant.version }}
+  template:
+    metadata:
+      labels:
+        app: {{ kpimon_app_label }}
+        release: {{ kpimon_release_label }}
+        kubernetes_name: ricxapp_kpimon-go
+        version: {{ kpimon_variant.version }}
+    spec:
+      containers:
+        - name: kpimon-go
+          image: {{ kpimon_variant.image }}
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: {{ kpimon_configmap_appenv }}
+            - configMapRef:
+                name: {{ kpimon_dbaas_configmap }}
+          livenessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: ric/v1/health/alive
+              port: 8080
+              scheme: HTTP
+            initialDelaySeconds: 5
+            periodSeconds: 15
+            successThreshold: 1
+            timeoutSeconds: 1
+          readinessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: ric/v1/health/ready
+              port: 8080
+              scheme: HTTP
+            initialDelaySeconds: 5
+            periodSeconds: 15
+            successThreshold: 1
+            timeoutSeconds: 1
+          ports:
+            - containerPort: 8080
+              name: http
+              protocol: TCP
+            - containerPort: 4560
+              name: rmr-data
+              protocol: TCP
+            - containerPort: 4561
+              name: rmr-route
+              protocol: TCP
+          resources: {}
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          volumeMounts:
+            - mountPath: /opt/ric/config
+              name: config-volume
+      dnsPolicy: ClusterFirst
+      hostname: kpimon-go-{{ kpimon_variant.version }}
+{% if kpimon_image_pull_secret | default('') | length > 0 %}
+      imagePullSecrets:
+        - name: {{ kpimon_image_pull_secret }}
+{% endif %}
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      terminationGracePeriodSeconds: 30
+      volumes:
+        - configMap:
+            defaultMode: 420
+            name: {{ kpimon_configmap_appconfig }}
+          name: config-volume

@@ -1,0 +1,50 @@
+# OS/editor noise
+.DS_Store
+.vscode/
+Thumbs.db
+*.swp
+*.swo
+*.bak
+*~
+
+# Python and Ansible local state
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.ansible/
+*.retry
+
+# Runtime artifacts
+artifacts/
+tmp/
+output/
+*.log
+
+# Secrets and local cluster access
+.env
+.env.*
+!.env.example
+*.vault-pass
+vault.yaml
+kubeconfig
+*.kubeconfig
+.kube/
+id_rsa
+id_ed25519
+*.pem
+*.key
+
+# Unsafe capture/build artifacts
+*.pcap
+*.pcapng
+*.pdf
+*.tgz
+*.tar
+*.tar.gz
+*.zip
+
+# Generated plots are excluded by default; curated samples should be committed
+# as CSV/Markdown unless a specific HTML artifact is reviewed.
+*.html

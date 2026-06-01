@@ -1,0 +1,85 @@
+VAGRANTFILE_API_VERSION = "2"
+
+MASTER_NAME  = "{{ vm_master_name }}"
+WORKER1_NAME = "{{ vm_worker1_name }}"
+
+MASTER_IP  = "{{ vm_master_ip }}"
+WORKER1_IP = "{{ vm_worker1_ip }}"
+
+# Optional bridged (LAN) addresses for direct access from controller
+MASTER_LAN_IP  = "{{ vm_master_lan_ip | default('') }}"
+WORKER1_LAN_IP = "{{ vm_worker1_lan_ip | default('') }}"
+
+BOX_NAME = "{{ vagrant_box }}"
+
+MASTER_CPU = {{ vm_master_cpu }}
+MASTER_MEM = {{ vm_master_mem_mb }}
+WORKER_CPU = {{ vm_worker_cpu }}
+WORKER_MEM = {{ vm_worker_mem_mb }}
+DISK_SIZE  = "{{ vm_disk_size_gb }}GB"
+
+MAC_PUBKEY = <<-KEY
+{{ mac_pubkey }}
+KEY
+
+BRIDGE_NAME = "{{ vm_bridge_interface | default('') }}"
+
+def node_config(config, name, hostonly_ip, lan_ip, cpus, mem)
+  config.vm.box = BOX_NAME
+  config.vm.hostname = name
+  config.vm.provider "virtualbox" do |vb|
+    vb.name = name
+    vb.cpus = cpus
+    vb.memory = mem
+  end
+
+  # Host-only network with static IPs from the configured lab range.
+  config.vm.network "private_network", ip: hostonly_ip
+
+  # Bridged (public) network on the same LAN as the controller
+  # Uses static IPs on the LAN; requires that the chosen IPs are free.
+  # Selects a specific bridge if provided; otherwise lets Vagrant/VirtualBox choose.
+  if lan_ip && lan_ip != ""
+    if BRIDGE_NAME && BRIDGE_NAME != ""
+      config.vm.network "public_network", ip: lan_ip, bridge: BRIDGE_NAME
+    else
+      config.vm.network "public_network", ip: lan_ip
+    end
+  end
+
+  # 40GB disk per node (requires vagrant-disksize plugin)
+  if Vagrant.has_plugin?("vagrant-disksize")
+    config.disksize.size = DISK_SIZE
+  end
+
+  # Provisioning SSH Publickey
+  config.vm.provision "shell", inline: <<-SHELL
+    set -e
+    user=vagrant
+    home=/home/$user
+    mkdir -p $home/.ssh
+    touch $home/.ssh/authorized_keys
+    chown -R $user:$user $home/.ssh
+    chmod 700 $home/.ssh
+    grep -qxF "#{MAC_PUBKEY.strip}" $home/.ssh/authorized_keys || echo "#{MAC_PUBKEY.strip}" >> $home/.ssh/authorized_keys
+    chmod 600 $home/.ssh/authorized_keys
+    # Ensure python3 (for Ansible)
+    sudo apt-get update -y
+    sudo apt-get install -y python3
+  SHELL
+end
+
+Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
+  config.vm.boot_timeout = 900  # Needed for starting all nodes at once
+  # Faster, less noisy
+  config.vm.synced_folder ".", "/vagrant", disabled: true
+
+  config.vm.define MASTER_NAME do |node|
+    node_config(node, MASTER_NAME, MASTER_IP, MASTER_LAN_IP, MASTER_CPU, MASTER_MEM)
+  end
+
+  config.vm.define WORKER1_NAME do |node|
+    node_config(node, WORKER1_NAME, WORKER1_IP, WORKER1_LAN_IP, WORKER_CPU, WORKER_MEM)
+  end
+
+end

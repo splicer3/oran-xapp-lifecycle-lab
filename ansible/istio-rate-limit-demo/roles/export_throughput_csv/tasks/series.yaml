@@ -1,0 +1,107 @@
+---
+- name: Reset threshold tracking for response code {{ export_throughput_csv_series.response_code }}
+  ansible.builtin.set_fact:
+    export_throughput_csv_series_threshold_timestamp: null
+    export_throughput_csv_series_positive_timestamp: null
+    export_throughput_csv_series_event_timestamp: null
+
+- name: Build PromQL expression for response code {{ export_throughput_csv_series.response_code }}
+  ansible.builtin.set_fact:
+    export_throughput_csv_series_promql: >-
+      sum(
+        rate(
+          istio_requests_total{
+            reporter="destination",
+            destination_workload="{{ export_throughput_csv_destination_workload }}",
+            destination_workload_namespace="{{ export_throughput_csv_destination_namespace }}",
+            response_code="{{ export_throughput_csv_series.response_code }}"
+          }[{{ export_throughput_csv_rate_interval_seconds }}s]
+        )
+      )
+
+- name: Query Prometheus for response code {{ export_throughput_csv_series.response_code }}
+  ansible.builtin.uri:
+    url: >-
+      {{ export_throughput_csv_prom_base_url.rstrip('/')
+         }}/api/v1/query_range?{{ {
+           'query': export_throughput_csv_series_promql,
+           'start': export_throughput_csv_common_params.start,
+           'end': export_throughput_csv_common_params.end,
+           'step': export_throughput_csv_common_params.step
+         } | urlencode }}
+    method: GET
+    return_content: true
+    status_code: 200
+    timeout: 60
+  register: export_throughput_csv_series_response
+
+- name: Decode JSON payload for response code {{ export_throughput_csv_series.response_code }}
+  ansible.builtin.set_fact:
+    export_throughput_csv_series_json: >-
+      {{ export_throughput_csv_series_response.content | from_json }}
+
+- name: Validate result payload for response code {{ export_throughput_csv_series.response_code }}
+  ansible.builtin.assert:
+    that:
+      - export_throughput_csv_series_json.status | default('error') == 'success'
+      - (export_throughput_csv_series_json.data.result | default([])) | length > 0
+    fail_msg: >-
+      Prometheus query returned no data for response code
+      {{ export_throughput_csv_series.response_code }} in workload
+      {{ export_throughput_csv_destination_workload }}.
+
+- name: Extract samples for response code {{ export_throughput_csv_series.response_code }}
+  ansible.builtin.set_fact:
+    export_throughput_csv_series_samples: >-
+      {{ export_throughput_csv_series_json['data']['result'][0]['values'] }}
+
+- name: Detect threshold crossing for response code {{ export_throughput_csv_series.response_code }}
+  ansible.builtin.set_fact:
+    export_throughput_csv_series_threshold_timestamp: "{{ sample[0] | int }}"
+  loop: "{{ export_throughput_csv_series_samples }}"
+  loop_control:
+    loop_var: sample
+  when:
+    - export_throughput_csv_series.detect_threshold | default(false)
+    - (export_throughput_csv_threshold_rps | int) > 0
+    - sample[1] | float <= (export_throughput_csv_threshold_rps | float)
+    - export_throughput_csv_series_threshold_timestamp is none
+
+- name: Detect positive response rate for response code {{ export_throughput_csv_series.response_code }}
+  ansible.builtin.set_fact:
+    export_throughput_csv_series_positive_timestamp: "{{ sample[0] | int }}"
+  loop: "{{ export_throughput_csv_series_samples }}"
+  loop_control:
+    loop_var: sample
+  when:
+    - export_throughput_csv_series.detect_positive | default(false)
+    - sample[1] | float > (export_throughput_csv_positive_floor | float)
+    - export_throughput_csv_series_positive_timestamp is none
+
+- name: Write CSV for response code {{ export_throughput_csv_series.response_code }}
+  ansible.builtin.copy:
+    dest: "{{ export_throughput_csv_series.output_csv }}"
+    mode: "0644"
+    content: |-
+      time,{{ export_throughput_csv_series.header }}
+      {% for sample in export_throughput_csv_series_samples -%}
+      {{ (sample[0] | int) - (export_throughput_csv_time_zero_epoch | int) }},{{ '%.6f' % (sample[1] | float) }}
+      {% endfor %}
+
+- name: Determine rate limit event timestamp for response code {{ export_throughput_csv_series.response_code }}
+  ansible.builtin.set_fact:
+    export_throughput_csv_series_event_timestamp: "{{ (candidates | min) if (candidates | length > 0) else None }}"
+  vars:
+    candidates: >-
+      {{ [
+           export_throughput_csv_series_threshold_timestamp,
+           export_throughput_csv_series_positive_timestamp
+         ] | reject('equalto', None) | list }}
+
+- name: Update global rate limit effective timestamp
+  ansible.builtin.set_fact:
+    export_throughput_csv_rate_limit_event_timestamp: "{{ export_throughput_csv_series_event_timestamp }}"
+  when:
+    - export_throughput_csv_series_event_timestamp is not none
+    - export_throughput_csv_rate_limit_event_timestamp is none
+      or export_throughput_csv_series_event_timestamp < export_throughput_csv_rate_limit_event_timestamp

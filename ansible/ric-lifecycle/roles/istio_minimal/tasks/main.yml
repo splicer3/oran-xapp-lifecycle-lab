@@ -1,0 +1,230 @@
+---
+- name: Ensure supported OS family
+  ansible.builtin.assert:
+    that:
+      - ansible_os_family == target_os_family
+    fail_msg: "This role currently supports Ubuntu/Debian hosts only. Found: {{ ansible_os_family }}"
+
+- name: Install Istio prerequisites
+  ansible.builtin.apt:
+    name:
+      - curl
+      - tar
+      - jq
+    state: present
+    update_cache: true
+  become: true
+
+- name: Map host architecture to Istio artifact architecture
+  ansible.builtin.set_fact:
+    istio_artifact_arch: "{{ istio_arch_map[ansible_architecture] | default('') }}"
+  vars:
+    istio_arch_map:
+      x86_64: amd64
+      aarch64: arm64
+      arm64: arm64
+
+- name: Validate supported architecture
+  ansible.builtin.assert:
+    that:
+      - istio_artifact_arch | length > 0
+    fail_msg: >-
+      Unsupported architecture '{{ ansible_architecture }}' for Istio artifact download.
+
+- name: Build Istio download paths
+  ansible.builtin.set_fact:
+    istio_tarball_name: "istio-{{ istio_version }}-linux-{{ istio_artifact_arch }}.tar.gz"
+    istio_tarball_path: "{{ istio_download_dir }}/istio-{{ istio_version }}-linux-{{ istio_artifact_arch }}.tar.gz"
+    istio_extract_path: "{{ istio_download_dir }}/istio-{{ istio_version }}"
+
+- name: Ensure Istio download directory exists
+  ansible.builtin.file:
+    path: "{{ istio_download_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Ensure istioctl install directory exists
+  ansible.builtin.file:
+    path: "{{ istioctl_bin_path | dirname }}"
+    state: directory
+    mode: "0755"
+
+- name: Download Istio release tarball
+  ansible.builtin.get_url:
+    url: "{{ istio_download_base_url }}/{{ istio_version }}/{{ istio_tarball_name }}"
+    dest: "{{ istio_tarball_path }}"
+    mode: "0644"
+
+- name: Extract Istio release
+  ansible.builtin.unarchive:
+    src: "{{ istio_tarball_path }}"
+    dest: "{{ istio_download_dir }}"
+    remote_src: true
+    creates: "{{ istio_extract_path }}/bin/istioctl"
+
+- name: Check extracted istioctl binary
+  ansible.builtin.stat:
+    path: "{{ istio_extract_path }}/bin/istioctl"
+  register: istioctl_extracted
+
+- name: Fail when extracted istioctl binary is missing
+  ansible.builtin.fail:
+    msg: >-
+      Expected istioctl at {{ istio_extract_path }}/bin/istioctl after extraction,
+      but it was not found. Check istio_version and downloaded tarball layout.
+  when: not istioctl_extracted.stat.exists
+
+- name: Install istioctl binary
+  ansible.builtin.copy:
+    src: "{{ istio_extract_path }}/bin/istioctl"
+    dest: "{{ istioctl_bin_path }}"
+    mode: "0755"
+    remote_src: true
+
+- name: Check local istioctl version
+  ansible.builtin.command: "{{ istioctl_bin_path }} version --remote=false --short"
+  register: istioctl_local_version
+  failed_when: false
+  changed_when: false
+
+- name: Check istiod deployment state
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ k3s_kubeconfig }}"
+    api_version: apps/v1
+    kind: Deployment
+    namespace: "{{ istio_namespace }}"
+    name: istiod
+  register: istio_istiod_state
+  failed_when: false
+  changed_when: false
+
+- name: Decide if Istio install is required
+  ansible.builtin.set_fact:
+    istio_install_required: >-
+      {{
+        (force_istio_reinstall | bool)
+        or
+        (istioctl_local_version.rc != 0)
+        or
+        (('client version: ' ~ istio_version) not in (istioctl_local_version.stdout | default('') | lower))
+        or
+        ((istio_istiod_state.resources | default([]) | length) == 0)
+      }}
+
+- name: Install Istio control plane (minimal profile)
+  ansible.builtin.command: "{{ istioctl_bin_path }} install --set profile={{ istio_profile }} --skip-confirmation"
+  environment:
+    KUBECONFIG: "{{ k3s_kubeconfig }}"
+  register: istio_install_result
+  when: istio_install_required
+  changed_when: istio_install_result.rc == 0
+
+- name: Log skipped Istio install
+  ansible.builtin.debug:
+    msg: "Skipping Istio install: requested version already present and istiod is deployed."
+  when: not istio_install_required
+
+- name: Wait for istiod deployment readiness
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ k3s_kubeconfig }}"
+    api_version: apps/v1
+    kind: Deployment
+    namespace: "{{ istio_namespace }}"
+    name: istiod
+  register: istio_istiod_wait
+  retries: "{{ istio_wait_retries }}"
+  delay: "{{ istio_wait_delay }}"
+  until: >-
+    (istio_istiod_wait.resources | length) == 1
+    and
+    ((istio_istiod_wait.resources[0].status.availableReplicas | default(0) | int) > 0)
+  changed_when: false
+
+- name: Ensure Istio injection label on target namespaces
+  kubernetes.core.k8s:
+    kubeconfig: "{{ k3s_kubeconfig }}"
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ item }}"
+        labels:
+          istio-injection: enabled
+  loop: "{{ istio_target_namespaces }}"
+
+- name: Initialize namespace restart list
+  ansible.builtin.set_fact:
+    istio_namespaces_missing_sidecar: []
+
+- name: Count workload pods missing sidecars by namespace
+  ansible.builtin.shell: |
+    set -euo pipefail
+    k3s kubectl -n {{ item }} get pods -o json \
+      | jq '[.items[]
+              | select(.metadata.ownerReferences and (.metadata.ownerReferences | length > 0))
+              | select(.metadata.ownerReferences[0].kind == "ReplicaSet" or .metadata.ownerReferences[0].kind == "StatefulSet")
+              | select(.metadata.annotations["sidecar.istio.io/status"] == null)
+            ] | length'
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ k3s_kubeconfig }}"
+  loop: "{{ istio_target_namespaces }}"
+  register: istio_sidecar_missing_count
+  changed_when: false
+
+- name: Build namespace restart list
+  ansible.builtin.set_fact:
+    istio_namespaces_missing_sidecar: "{{ istio_namespaces_missing_sidecar + [item.item] }}"
+  loop: "{{ istio_sidecar_missing_count.results }}"
+  when: (item.stdout | default('0') | int) > 0
+
+- name: Report namespaces requiring sidecar restart
+  ansible.builtin.debug:
+    msg: "Namespaces requiring restart to inject sidecars: {{ istio_namespaces_missing_sidecar | join(', ') }}"
+  when: (istio_namespaces_missing_sidecar | length) > 0
+
+- name: Rollout restart deployments in affected namespaces
+  ansible.builtin.command: "k3s kubectl -n {{ item }} rollout restart deployment"
+  environment:
+    KUBECONFIG: "{{ k3s_kubeconfig }}"
+  loop: "{{ istio_namespaces_missing_sidecar }}"
+  when: (istio_namespaces_missing_sidecar | length) > 0
+  changed_when: true
+
+- name: Rollout restart statefulsets in affected namespaces
+  ansible.builtin.command: "k3s kubectl -n {{ item }} rollout restart statefulset"
+  environment:
+    KUBECONFIG: "{{ k3s_kubeconfig }}"
+  loop: "{{ istio_namespaces_missing_sidecar }}"
+  when: (istio_namespaces_missing_sidecar | length) > 0
+  changed_when: true
+
+- name: Wait for sidecar injection rollout completion
+  ansible.builtin.shell: |
+    set -euo pipefail
+    k3s kubectl -n {{ item }} get pods -o json | jq -r '
+      [ .items[]
+        | select(.metadata.ownerReferences and (.metadata.ownerReferences | length > 0))
+        | select(.metadata.ownerReferences[0].kind == "ReplicaSet" or .metadata.ownerReferences[0].kind == "StatefulSet")
+      ] as $pods
+      | {
+          missing_proxy: ([$pods[] | select(.metadata.annotations["sidecar.istio.io/status"] == null)] | length),
+          non_running: ([$pods[] | select(.status.phase != "Running")] | length)
+        }
+      | "\(.missing_proxy) \(.non_running)"'
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ k3s_kubeconfig }}"
+  register: istio_sidecar_wait
+  loop: "{{ istio_namespaces_missing_sidecar }}"
+  when: (istio_namespaces_missing_sidecar | length) > 0
+  retries: "{{ istio_wait_retries }}"
+  delay: "{{ istio_wait_delay }}"
+  until: >-
+    (istio_sidecar_wait.stdout.split()[0] | int) == 0
+    and
+    (istio_sidecar_wait.stdout.split()[1] | int) == 0
+  changed_when: false

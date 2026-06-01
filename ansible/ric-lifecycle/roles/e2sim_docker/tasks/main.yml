@@ -1,0 +1,47 @@
+---
+- name: Ensure Docker service is running
+  ansible.builtin.systemd:
+    name: docker
+    state: started
+    enabled: true
+
+- name: Run e2sim container (default image command)
+  community.docker.docker_container:
+    name: "{{ e2sim_container_name }}"
+    image: "{{ e2sim_image }}"
+    state: started
+    restart_policy: "{{ e2sim_restart_policy }}"
+    network_mode: "{{ e2sim_network_mode }}"
+    pull: "{{ e2sim_pull }}"
+    env: "{{ e2sim_env if (e2sim_env | length) > 0 else omit }}"
+  when: (e2sim_container_command | length) == 0
+
+- name: Run e2sim container (custom command)
+  community.docker.docker_container:
+    name: "{{ e2sim_container_name }}"
+    image: "{{ e2sim_image }}"
+    state: started
+    command: "{{ e2sim_container_command }}"
+    restart_policy: "{{ e2sim_restart_policy }}"
+    network_mode: "{{ e2sim_network_mode }}"
+    pull: "{{ e2sim_pull }}"
+    env: "{{ e2sim_env if (e2sim_env | length) > 0 else omit }}"
+  when: (e2sim_container_command | length) > 0
+
+- name: Wait for e2sim container to be running
+  community.docker.docker_container_info:
+    name: "{{ e2sim_container_name }}"
+  register: e2sim_container_info
+  retries: "{{ e2sim_ready_retries }}"
+  delay: "{{ e2sim_ready_delay }}"
+  until:
+    - e2sim_container_info.exists
+    - e2sim_container_info.container.State.Running
+  changed_when: false
+
+- name: Validate e2sim runtime status
+  ansible.builtin.assert:
+    that:
+      - e2sim_container_info.exists
+      - e2sim_container_info.container.State.Running
+    fail_msg: "e2sim container '{{ e2sim_container_name }}' is not running"

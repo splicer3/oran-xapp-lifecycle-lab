@@ -1,0 +1,37 @@
+---
+- name: Ensure Istio addon manifest directory exists
+  ansible.builtin.file:
+    path: "{{ istio_addons_manifest_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Download Istio addon manifests
+  ansible.builtin.get_url:
+    url: "{{ item.value }}"
+    dest: "{{ istio_addons_manifest_dir }}/{{ item.key }}.yaml"
+    mode: "0644"
+  loop: "{{ istio_addons_manifest_urls | dict2items }}"
+
+- name: Apply Istio addon manifests
+  kubernetes.core.k8s:
+    kubeconfig: "{{ k3s_kubeconfig }}"
+    state: present
+    src: "{{ istio_addons_manifest_dir }}/{{ item.key }}.yaml"
+  loop: "{{ istio_addons_manifest_urls | dict2items }}"
+
+- name: Wait for Istio addons deployments
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ k3s_kubeconfig }}"
+    api_version: apps/v1
+    kind: Deployment
+    namespace: "{{ istio_namespace }}"
+    name: "{{ item }}"
+  register: istio_addon_wait
+  loop: "{{ istio_addon_deployments }}"
+  retries: "{{ istio_wait_retries }}"
+  delay: "{{ istio_wait_delay }}"
+  until: >-
+    (istio_addon_wait.resources | length) == 1
+    and
+    ((istio_addon_wait.resources[0].status.availableReplicas | default(0) | int) > 0)
+  changed_when: false

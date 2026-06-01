@@ -1,0 +1,59 @@
+---
+# === Network ===
+# Fill these with the controller and node CIDRs for your lab network.
+control_cidr: "CHANGE_ME_CONTROL_CIDR"
+cluster_node_cidr: "CHANGE_ME_CLUSTER_NODE_CIDR"
+
+# K3s defaults
+pod_cidr: "10.42.0.0/16"
+service_cidr: "10.43.0.0/16"
+
+open_http_https: true
+open_nodeports: true
+
+# === K3s channel/version ===
+k3s_channel: "stable"
+k3s_tls_sans: []
+local_kubeconfig: "{{ lookup('env', 'PWD') }}/artifacts/kubeconfig"
+
+# === Vagrant/VMs on hypervisor ===
+vagrant_project_dir: "/opt/k3s-vagrant"
+
+# VirtualBox host-only network and static IPs. Replace with addresses from
+# the private host-only range configured on your hypervisor.
+vbox_hostonly_cidr: "CHANGE_ME_HOSTONLY_CIDR"
+vm_master_ip: "CHANGE_ME_MASTER_HOSTONLY_IP"
+vm_worker1_ip: "CHANGE_ME_WORKER_HOSTONLY_IP"
+
+# Optional: Bridged LAN interface and IPs (direct access from Controller)
+# If not set, the bridged interface is auto-detected on the hypervisor and
+# LAN IPs are derived from the hypervisor network. Set explicitly only when
+# NodePorts or LoadBalancer addresses must be reachable from another host.
+# vm_bridge_interface: "CHANGE_ME_BRIDGE_INTERFACE"
+vm_master_lan_ip: ""
+vm_worker1_lan_ip: ""
+
+# VM sizing (tweak as needed)
+vm_master_cpu: 4
+vm_master_mem_mb: 8192
+vm_worker_cpu: 2
+vm_worker_mem_mb: 8192
+vm_disk_size_gb: 40
+
+# Vagrant box for Ubuntu 24.04
+vagrant_box: "hashicorp-education/ubuntu-24-04"
+
+# Hostnames
+vm_master_name:  "master01"
+vm_worker1_name: "worker01"
+
+# Demo nginx app
+demo_namespace: "demo-nginx"
+demo_host: "nginx.local.dev"
+
+# Ingress-NGINX settings
+ingress_namespace: "ingress-nginx"
+ingress_release: "ingress-nginx"
+
+ingress_repo_name: "ingress-nginx"
+ingress_repo_url: "https://kubernetes.github.io/ingress-nginx"

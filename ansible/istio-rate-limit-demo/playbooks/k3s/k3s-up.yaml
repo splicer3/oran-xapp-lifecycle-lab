@@ -1,0 +1,60 @@
+---
+- name: Common base (packages, sysctl, UFW baseline)
+  hosts: k3s_cluster
+  become: true
+  gather_facts: true
+  roles:
+    - common
+
+- name: Install / Configure K3s server (master)
+  hosts: k3s_master
+  become: true
+  gather_facts: true
+  roles:
+    - k3s-master
+
+- name: Install / Configure K3s agents (workers)
+  hosts: k3s_workers
+  become: true
+  gather_facts: true
+  roles:
+    - k3s-worker
+
+# Start SSH tunnel to API server (localhost:6443) for Controller access
+- name: Establish local SSH tunnel to K3s API
+  hosts: localhost
+  gather_facts: false
+  vars:
+    tunnel_socket: "{{ lookup('env', 'PWD') }}/artifacts/k3s_tunnel.sock"
+    master_ip: "{{ hostvars[groups['k3s_master'][0]].ansible_host | default(hostvars[groups['k3s_master'][0]].ansible_default_ipv4.address) }}"
+    hypervisor_host: "{{ hostvars[groups['hypervisor'][0]].ansible_host }}"
+    hypervisor_user: "{{ hostvars[groups['hypervisor'][0]].ansible_user }}"
+    hypervisor_key: "{{ hostvars[groups['hypervisor'][0]].ansible_ssh_private_key_file }}"
+  tasks:
+    - name: Ensure artifacts dir exists
+      ansible.builtin.file:
+        path: "{{ lookup('env', 'PWD') }}/artifacts"
+        state: directory
+        mode: "0755"
+
+    - name: Check if tunnel control socket exists
+      ansible.builtin.stat:
+        path: "{{ tunnel_socket }}"
+      register: sock
+
+    - name: Start SSH tunnel to master node
+      ansible.builtin.command: >-
+        ssh -f -M -S {{ tunnel_socket }} -o ExitOnForwardFailure=yes -o StrictHostKeyChecking=no
+        -i {{ hypervisor_key }} -N -L 6443:{{ master_ip }}:6443 {{ hypervisor_user }}@{{ hypervisor_host }}
+      when: not sock.stat.exists
+      changed_when: not sock.stat.exists
+
+    - name: Wait for local 6443 to be reachable
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 6443
+        timeout: 30
+
+# Final validation (uses kubectl on Controller, via tunnel)
+- name: Validate K3s cluster
+  import_playbook: k3s-validate.yaml

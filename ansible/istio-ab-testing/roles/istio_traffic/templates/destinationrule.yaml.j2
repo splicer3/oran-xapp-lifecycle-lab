@@ -1,0 +1,13 @@
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: {{ service_name }}-dr
+  namespace: {{ namespace }}
+spec:
+  host: {{ service_host }}
+  subsets:
+{% for v in versions %}
+  - name: "{{ v }}"
+    labels:
+      version: "{{ v }}"
+{% endfor %}

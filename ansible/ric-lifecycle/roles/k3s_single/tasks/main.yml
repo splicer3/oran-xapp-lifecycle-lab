@@ -1,0 +1,109 @@
+---
+- name: Ensure supported OS family
+  ansible.builtin.assert:
+    that:
+      - ansible_os_family == target_os_family
+    fail_msg: "This role currently supports Ubuntu/Debian hosts only. Found: {{ ansible_os_family }}"
+
+- name: Install K3s prerequisites
+  ansible.builtin.apt:
+    name:
+      - curl
+      - ca-certificates
+    state: present
+    update_cache: true
+
+- name: Ensure K3s config directory exists
+  ansible.builtin.file:
+    path: /etc/rancher/k3s
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Render K3s config (Traefik disabled)
+  ansible.builtin.template:
+    src: config.yaml.j2
+    dest: "{{ k3s_config_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+  register: k3s_config_result
+
+- name: Download K3s install script
+  ansible.builtin.get_url:
+    url: https://get.k3s.io
+    dest: /usr/local/bin/get-k3s.sh
+    mode: "0755"
+
+- name: Check if K3s binary already exists
+  ansible.builtin.stat:
+    path: /usr/local/bin/k3s
+  register: k3s_binary
+
+- name: Install K3s server
+  ansible.builtin.command: /usr/local/bin/get-k3s.sh
+  environment:
+    INSTALL_K3S_CHANNEL: "{{ k3s_channel }}"
+    INSTALL_K3S_EXEC: "server --config {{ k3s_config_file }} --disable traefik"
+  args:
+    creates: /usr/local/bin/k3s
+  when: not k3s_binary.stat.exists
+
+- name: Restart K3s when config changed and installation already existed
+  ansible.builtin.systemd:
+    name: k3s
+    state: restarted
+    enabled: true
+  when:
+    - k3s_binary.stat.exists
+    - k3s_config_result.changed
+
+- name: Ensure K3s service is running
+  ansible.builtin.systemd:
+    name: k3s
+    state: started
+    enabled: true
+
+- name: Wait for kubeconfig to be created
+  ansible.builtin.wait_for:
+    path: "{{ k3s_system_kubeconfig }}"
+    timeout: 180
+
+- name: Ensure system kubeconfig permissions are strict
+  ansible.builtin.file:
+    path: "{{ k3s_system_kubeconfig }}"
+    owner: root
+    group: root
+    mode: "{{ k3s_write_kubeconfig_mode }}"
+
+- name: Ensure user kubeconfig directory exists
+  ansible.builtin.file:
+    path: "{{ k3s_kubeconfig | dirname }}"
+    state: directory
+    owner: "{{ ansible_facts.user_id }}"
+    group: "{{ ansible_facts.user_id }}"
+    mode: "0700"
+
+- name: Copy K3s kubeconfig to user home
+  ansible.builtin.copy:
+    src: "{{ k3s_system_kubeconfig }}"
+    dest: "{{ k3s_kubeconfig }}"
+    owner: "{{ ansible_facts.user_id }}"
+    group: "{{ ansible_facts.user_id }}"
+    mode: "0600"
+    remote_src: true
+
+- name: Wait for K3s API port
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: 6443
+    timeout: 180
+
+- name: Check cluster API readiness
+  ansible.builtin.command: "k3s kubectl get nodes --no-headers"
+  register: k3s_nodes
+  retries: 20
+  delay: 6
+  until: k3s_nodes.rc == 0
+  changed_when: false

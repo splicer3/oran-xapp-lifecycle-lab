@@ -1,0 +1,10 @@
+---
+# End-to-end site teardown
+# Usage: ansible-playbook site-reset.yaml
+
+- name: Reset ingress nginx
+  import_playbook: playbooks/ingress_nginx/ingress_reset.yaml
+- name: Teardown k3s cluster
+  import_playbook: playbooks/k3s/k3s-down.yaml
+- name: Teardown vagrant VMs
+  import_playbook: playbooks/vagrant/vms_down.yaml

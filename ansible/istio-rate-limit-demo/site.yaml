@@ -1,0 +1,10 @@
+---
+# End-to-end site bring-up
+# Usage: ansible-playbook site.yaml
+
+- name: Bring up vagrant VMs
+  import_playbook: playbooks/vagrant/vms_up.yaml
+- name: Bring up k3s cluster
+  import_playbook: playbooks/k3s/k3s-up.yaml
+- name: Bring up ingress nginx
+  import_playbook: playbooks/ingress_nginx/ingress.yaml

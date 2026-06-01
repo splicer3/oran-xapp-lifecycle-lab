@@ -1,0 +1,120 @@
+---
+- name: Verify required variables are defined
+  ansible.builtin.assert:
+    that:
+      - k3s_token is defined
+      - pod_cidr is defined
+      - service_cidr is defined
+      - ansible_default_ipv4.address is defined
+    fail_msg: "Required K3s variables are not defined"
+
+- name: Compute host-only prefix (e.g., "192.168.56.")
+  ansible.builtin.set_fact:
+    hostonly_prefix: "{{ vbox_hostonly_cidr.split('/')[0].rsplit('.', 1)[0] ~ '.' }}"
+# Detect the VirtualBox host-only interface & IP (same logic as server)
+- name: Detect host-only interface
+  ansible.builtin.shell: |
+    set -euo pipefail
+    ip -o -4 address show \
+      | awk '$4 ~ /^{{ hostonly_prefix }}[0-9]+/ {print $2; exit}'
+  args:
+    executable: /bin/bash
+  register: _flannel_iface
+  changed_when: false
+
+- name: Fail when host-only interface is missing
+  ansible.builtin.fail:
+    msg: "Unable to detect interface on {{ vbox_hostonly_cidr }}. Set k3s_flannel_iface manually or fix host-only networking."
+  when: _flannel_iface.stdout is not defined or (_flannel_iface.stdout | trim) == ''
+
+- name: Set fact for k3s_flannel_iface when detected
+  ansible.builtin.set_fact:
+    k3s_flannel_iface: "{{ _flannel_iface.stdout | trim }}"
+  when: _flannel_iface.stdout is defined and (_flannel_iface.stdout | trim) != ''
+
+- name: Debug picked interface
+  ansible.builtin.debug:
+    var: k3s_flannel_iface
+
+- name: Allow Kubernetes API 6443 from control_cidr
+  community.general.ufw:
+    rule: allow
+    port: "6443"
+    proto: tcp
+    from_ip: "{{ control_cidr }}"
+    comment: "K8s API - control"
+
+- name: Allow Kubernetes API 6443 from cluster_node_cidr
+  community.general.ufw:
+    rule: allow
+    port: "6443"
+    proto: tcp
+    from_ip: "{{ cluster_node_cidr }}"
+    comment: "K8s API - nodes"
+
+- name: Ensure config directory exists
+  ansible.builtin.file:
+    path: /etc/rancher/k3s
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Render K3s server config
+  ansible.builtin.template:
+    src: k3s_config.yaml.j2
+    dest: /etc/rancher/k3s/config.yaml
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Restart k3s server
+
+- name: Download K3s install script
+  ansible.builtin.get_url:
+    url: https://get.k3s.io
+    dest: /usr/local/bin/get-k3s.sh
+    mode: '0755'
+
+- name: Check if K3s server is installed
+  ansible.builtin.systemd:
+    name: k3s
+  register: k3s_active
+  changed_when: false
+  failed_when: false
+
+- name: Install K3s server
+  ansible.builtin.shell: |
+    INSTALL_K3S_CHANNEL="{{ k3s_channel }}" \
+    INSTALL_K3S_EXEC="server" \
+    /usr/local/bin/get-k3s.sh
+  args:
+    executable: /bin/bash
+    creates: /usr/local/bin/k3s
+  when: k3s_active.status is not defined or k3s_active.status != 'active'
+
+- name: Wait for kubeconfig to exist
+  ansible.builtin.wait_for:
+    path: /etc/rancher/k3s/k3s.yaml
+    timeout: 120
+
+- name: Ensure local artifacts dir exists (on Controller)
+  ansible.builtin.file:
+    path: "{{ local_kubeconfig | dirname }}"
+    state: directory
+    mode: '0755'
+  delegate_to: localhost
+  run_once: true
+
+- name: Fetch kubeconfig to Controller
+  ansible.builtin.fetch:
+    src: /etc/rancher/k3s/k3s.yaml
+    dest: "{{ local_kubeconfig }}"
+    flat: true
+
+- name: Replace server address in local kubeconfig with localhost
+  ansible.builtin.replace:
+    path: "{{ local_kubeconfig }}"
+    regexp: 'server:\s*https://127\.0\.0\.1:6443'
+    replace: "server: https://localhost:6443"
+  delegate_to: localhost
+  run_once: true

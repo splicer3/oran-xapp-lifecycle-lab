@@ -1,0 +1,69 @@
+---
+- name: Ensure rate limit artifact directory exists
+  ansible.builtin.file:
+    path: "{{ export_throughput_csv_artifact_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Reset computed rate limit effective timestamp
+  ansible.builtin.set_fact:
+    export_throughput_csv_rate_limit_event_timestamp: null
+
+- name: Calculate effective end epoch
+  ansible.builtin.set_fact:
+    export_throughput_csv_effective_end_epoch: >-
+      {{ (export_throughput_csv_end_epoch | default(lookup('pipe', 'date +%s'))) | int }}
+
+- name: Calculate effective start epoch
+  ansible.builtin.set_fact:
+    export_throughput_csv_effective_start_epoch: >-
+      {{ (
+           export_throughput_csv_start_epoch
+           | default(
+               export_throughput_csv_effective_end_epoch
+               - (export_throughput_csv_metric_window_seconds | int)
+             )
+         ) | int }}
+
+- name: Validate time window
+  ansible.builtin.assert:
+    that:
+      - export_throughput_csv_effective_start_epoch < export_throughput_csv_effective_end_epoch
+    fail_msg: >-
+      Invalid time window: export_throughput_csv_start_epoch
+      ({{ export_throughput_csv_effective_start_epoch }}) must be less than
+      export_throughput_csv_end_epoch ({{ export_throughput_csv_effective_end_epoch }}).
+
+- name: Build common query parameters
+  ansible.builtin.set_fact:
+    export_throughput_csv_common_params:
+      start: "{{ export_throughput_csv_effective_start_epoch }}"
+      end: "{{ export_throughput_csv_effective_end_epoch }}"
+      step: "{{ export_throughput_csv_step }}"
+
+- name: Process response code series
+  ansible.builtin.include_tasks: series.yaml
+  loop: "{{ export_throughput_csv_series_definitions }}"
+  loop_control:
+    loop_var: export_throughput_csv_series
+
+- name: Append rate limit effective marker when detected
+  when: export_throughput_csv_rate_limit_event_timestamp is not none
+  ansible.builtin.set_fact:
+    export_throughput_csv_marker_events: >-
+      {{ (export_throughput_csv_marker_events | default([]))
+         + [{
+             'label': export_throughput_csv_threshold_marker_label,
+             'timestamp': export_throughput_csv_rate_limit_event_timestamp
+           }] }}
+
+- name: Write throughput marker CSV
+  when: export_throughput_csv_marker_events | length > 0
+  ansible.builtin.copy:
+    dest: "{{ export_throughput_csv_output_markers_csv }}"
+    mode: "0644"
+    content: |-
+      time,label
+      {% for event in export_throughput_csv_marker_events -%}
+      {{ (event.timestamp | int) - (export_throughput_csv_time_zero_epoch | int) }},{{ event.label }}
+      {% endfor %}

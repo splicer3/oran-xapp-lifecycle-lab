@@ -1,0 +1,50 @@
+---
+- name: Uninstall K3s agent on workers
+  hosts: k3s_workers
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Uninstall agent if present
+      ansible.builtin.shell: /usr/local/bin/k3s-agent-uninstall.sh
+      args: { executable: /bin/bash }
+      register: out
+      changed_when: "'Deleting' in out.stdout or out.rc == 0"
+      failed_when: false
+
+- name: Uninstall K3s server on master
+  hosts: k3s_master
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Uninstall server if present
+      ansible.builtin.shell: /usr/local/bin/k3s-uninstall.sh
+      args: { executable: /bin/bash }
+      register: out
+      changed_when: "'Deleting' in out.stdout or out.rc == 0"
+      failed_when: false
+
+- name: Cleanup local artifacts
+  hosts: localhost
+  gather_facts: false
+  vars:
+    tunnel_socket: "{{ lookup('env', 'PWD') }}/artifacts/k3s_tunnel.sock"
+    hypervisor_host: "{{ hostvars[groups['hypervisor'][0]].ansible_host }}"
+    hypervisor_user: "{{ hostvars[groups['hypervisor'][0]].ansible_user }}"
+  tasks:
+    - name: Close SSH tunnel to K3s API if open
+      ansible.builtin.command: >-
+        ssh -S {{ tunnel_socket }} -O exit {{ hypervisor_user }}@{{ hypervisor_host }}
+      register: close_out
+      failed_when: false
+      changed_when: "'Exit request sent' in (close_out.stderr | default(''))"
+      when: tunnel_socket is defined and lookup('fileglob', tunnel_socket) | length > 0
+
+    - name: Remove tunnel control socket (if present)
+      ansible.builtin.file:
+        path: "{{ tunnel_socket }}"
+        state: absent
+
+    - name: Remove local kubeconfig
+      ansible.builtin.file:
+        path: "{{ lookup('env', 'PWD') }}/artifacts/kubeconfig"
+        state: absent

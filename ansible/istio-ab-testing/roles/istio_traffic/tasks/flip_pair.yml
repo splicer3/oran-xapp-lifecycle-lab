@@ -1,0 +1,63 @@
+- name: Route 100% to {{ primary_version }}
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig }}"
+    state: present
+    definition: >-
+      {{ lookup(
+        'template',
+        '../roles/istio_traffic/templates/virtualservice.yaml.j2',
+        vars={
+          'primary_version': primary_version,
+          'secondary_version': secondary_version,
+          'primary_weight': primary_weight
+        }
+      ) }}
+  run_once: true
+  vars:
+    primary_weight: 100
+
+- name: Record flip apply for {{ primary_version }}
+  ansible.builtin.set_fact:
+    flip_events: >-
+      {{ (flip_events | default([])) + [{
+        'timestamp': (lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ') | trim),
+        'action': 'apply',
+        'to_version': primary_version,
+        'from_version': secondary_version
+      }] }}
+
+- name: Wait before switching to {{ secondary_version }}
+  ansible.builtin.pause:
+    seconds: "{{ traffic_cycle_seconds }}"
+
+- name: Route 100% to {{ secondary_version }}
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig }}"
+    state: present
+    definition: >-
+      {{ lookup(
+        'template',
+        '../roles/istio_traffic/templates/virtualservice.yaml.j2',
+        vars={
+          'primary_version': primary_version,
+          'secondary_version': secondary_version,
+          'primary_weight': primary_weight
+        }
+      ) }}
+  run_once: true
+  vars:
+    primary_weight: 0
+
+- name: Record flip apply for {{ secondary_version }}
+  ansible.builtin.set_fact:
+    flip_events: >-
+      {{ (flip_events | default([])) + [{
+        'timestamp': (lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ') | trim),
+        'action': 'apply',
+        'to_version': secondary_version,
+        'from_version': primary_version
+      }] }}
+
+- name: Wait before next cycle
+  ansible.builtin.pause:
+    seconds: "{{ traffic_cycle_seconds }}"

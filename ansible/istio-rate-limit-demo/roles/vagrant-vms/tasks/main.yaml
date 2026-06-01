@@ -1,0 +1,104 @@
+---
+- name: Ensure base packages
+  ansible.builtin.apt:
+    name:
+      - curl
+      - gnupg
+      - software-properties-common
+    state: present
+    update_cache: true
+
+- name: Check VirtualBox availability
+  ansible.builtin.command: which VBoxManage
+  register: vbm
+  changed_when: false
+  failed_when: vbm.rc != 0
+
+- name: Install Vagrant (apt)
+  ansible.builtin.apt:
+    name: vagrant
+    state: present
+    update_cache: true
+
+- name: Ensure vagrant project dir exists
+  ansible.builtin.file:
+    path: "{{ vagrant_project_dir }}"
+    state: directory
+    owner: "{{ ansible_user | default('root') }}"
+    group: "{{ ansible_user | default('root') }}"
+    mode: "0755"
+
+- name: Compute LAN prefix from hypervisor
+  ansible.builtin.set_fact:
+    _lan_prefix: "{{ ansible_default_ipv4.address | regex_replace('\\.\\d+$', '') }}"
+
+- name: Set default master LAN IP when undefined
+  ansible.builtin.set_fact:
+    vm_master_lan_ip: "{{ _lan_prefix + '.210' }}"
+  when: vm_master_lan_ip is not defined or not vm_master_lan_ip
+
+- name: Set default worker1 LAN IP when undefined
+  ansible.builtin.set_fact:
+    vm_worker1_lan_ip: "{{ _lan_prefix + '.211' }}"
+  when: vm_worker1_lan_ip is not defined or not vm_worker1_lan_ip
+
+- name: Detect VirtualBox bridged interface matching hypervisor LAN
+  ansible.builtin.shell: |
+    set -euo pipefail
+    ip="{{ ansible_default_ipv4.address }}"
+    # Split bridged interfaces into records by blank line, find the record with the matching IP, print Name
+    VBoxManage list bridgedifs | awk -v ip="$ip" '
+    BEGIN{RS="";FS="\n"}
+    {
+      rec=$0;
+      if (rec ~ "IPAddress:[[:space:]]*" ip) {
+        for(i=1;i<=NF;i++){
+          if ($i ~ /^Name:/) {
+            sub(/^Name:[[:space:]]*/, "", $i);
+            print $i;
+          }
+        }
+      }
+    }' | head -n1
+  args:
+    executable: /bin/bash
+  register: _bridge_name
+  changed_when: false
+  failed_when: false
+
+- name: Set bridge interface fact (if auto-detected)
+  ansible.builtin.set_fact:
+    vm_bridge_interface: "{{ vm_bridge_interface | default(_bridge_name.stdout | trim) }}"
+
+- name: Template Vagrantfile
+  ansible.builtin.template:
+    src: Vagrantfile.j2
+    dest: "{{ vagrant_project_dir }}/Vagrantfile"
+    mode: "0644"
+
+- name: Check vagrant-disksize plugin
+  ansible.builtin.shell: |
+    set -o pipefail
+    vagrant plugin list | grep -q '^vagrant-disksize'
+  args:
+    chdir: "{{ vagrant_project_dir }}"
+  register: disksize_present
+  failed_when: false
+  changed_when: false
+
+- name: Install vagrant-disksize plugin if missing
+  ansible.builtin.command: vagrant plugin install vagrant-disksize
+  args:
+    chdir: "{{ vagrant_project_dir }}"
+  when: disksize_present.rc != 0
+  register: plug_out
+  changed_when: "'Installed' in (plug_out.stdout | default(''))"
+
+- name: Vagrant up
+  ansible.builtin.command: vagrant up
+  args:
+    chdir: "{{ vagrant_project_dir }}"
+  register: vu
+  changed_when: "'Creating' in (vu.stdout | default('')) or 'Starting' in (vu.stdout | default(''))"
+
+# Note: SSH Publickey is provisioned through Vagrantfile config
