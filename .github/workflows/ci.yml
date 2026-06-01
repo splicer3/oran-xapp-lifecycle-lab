@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   checks:
     runs-on: ubuntu-latest
@@ -12,15 +15,111 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install check dependencies
+      - name: Install Ansible in local virtualenv
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install ansible-core plotly
+          python3 -m venv "${RUNNER_TEMP}/repo-checks-venv"
+          "${RUNNER_TEMP}/repo-checks-venv/bin/python" -m pip install --upgrade pip
+          "${RUNNER_TEMP}/repo-checks-venv/bin/python" -m pip install ansible-core
+          echo "${RUNNER_TEMP}/repo-checks-venv/bin" >> "$GITHUB_PATH"
+
+      - name: Check markdown links and documented paths
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from urllib.parse import unquote
+          import re
+          import sys
+
+          root = Path.cwd()
+          ignored_dirs = {".git", ".codex-local"}
+          skipped_files = {"AGENTS.override.md"}
+          link_re = re.compile(r'!?\[[^\]]*\]\(([^)]+)\)')
+          failures = []
+
+          for path in sorted(root.rglob("*.md")):
+              rel_parts = set(path.relative_to(root).parts)
+              if rel_parts & ignored_dirs or path.name in skipped_files:
+                  continue
+              text = path.read_text(encoding="utf-8")
+              for match in link_re.finditer(text):
+                  raw = match.group(1).strip()
+                  if not raw or raw.startswith("#"):
+                      continue
+                  if raw.startswith("<") and raw.endswith(">"):
+                      raw = raw[1:-1]
+                  target = raw.split()[0]
+                  if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", target):
+                      continue
+                  target = target.split("#", 1)[0].split("?", 1)[0]
+                  if not target or target.startswith("/"):
+                      continue
+                  candidate = (path.parent / unquote(target)).resolve()
+                  try:
+                      candidate.relative_to(root)
+                  except ValueError:
+                      failures.append(f"{path.relative_to(root)}: link escapes repo: {raw}")
+                      continue
+                  if not candidate.exists():
+                      failures.append(f"{path.relative_to(root)}: missing link target: {raw}")
+
+          required_paths = [
+              "Makefile",
+              "scripts/check-prereqs.sh",
+              "scripts/check-public-safety.sh",
+              "ansible/ric-lifecycle/site.yml",
+              "ansible/ric-lifecycle/reset.yml",
+              "ansible/ric-lifecycle/playbooks/validate.yml",
+              "ansible/istio-ab-testing/playbooks/run_demo.yml",
+              "ansible/istio-ab-testing/scripts/plot_ab.py",
+              "ansible/istio-rate-limit-demo/playbooks/istio/rate_limit_demo.yaml",
+              "ansible/istio-rate-limit-demo/scripts/plot_rate_limit.py",
+              "results/sample/ab-testing/csv/ABTesting_kpimonV2.csv",
+              "docs/troubleshooting.md",
+              "THIRD_PARTY.md",
+              "SECURITY.md",
+              "CITATION.cff",
+              "LICENSE",
+              "LICENSE_DECISION.md",
+          ]
+          for rel in required_paths:
+              if not (root / rel).exists():
+                  failures.append(f"missing documented path: {rel}")
+
+          if failures:
+              print("\n".join(failures))
+              sys.exit(1)
+          print("markdown/path sanity checks passed")
+          PY
+
+      - name: Check shell syntax
+        run: |
+          find . -path ./.git -prune -o -name '*.sh' -type f -print | while IFS= read -r script; do
+            echo "bash -n ${script}"
+            bash -n "$script"
+          done
+
+      - name: Check YAML syntax
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import sys
+          import yaml
+
+          failures = []
+          for path in sorted(Path(".").rglob("*")):
+              if ".git" in path.parts or path.suffix.lower() not in {".yml", ".yaml", ".cff"}:
+                  continue
+              try:
+                  with path.open(encoding="utf-8") as handle:
+                      list(yaml.safe_load_all(handle))
+              except Exception as exc:
+                  failures.append(f"{path}: {exc}")
+
+          if failures:
+              print("\n".join(failures))
+              sys.exit(1)
+          print("YAML syntax checks passed")
+          PY
 
       - name: Install Ansible collections
         run: |
@@ -29,8 +128,7 @@ jobs:
 
       - name: Compile Python scripts
         run: |
-          python -m py_compile ansible/istio-ab-testing/scripts/plot_ab.py
-          python -m py_compile ansible/istio-rate-limit-demo/scripts/plot_rate_limit.py
+          python -m py_compile $(find ansible -name '*.py' -type f | sort)
 
       - name: Check Ansible syntax
         run: |
@@ -38,20 +136,19 @@ jobs:
           ANSIBLE_LOCAL_TEMP=/tmp ANSIBLE_REMOTE_TEMP=/tmp ansible-playbook --syntax-check site.yml -i inventory/hosts.ini.example
           ANSIBLE_LOCAL_TEMP=/tmp ANSIBLE_REMOTE_TEMP=/tmp ansible-playbook --syntax-check reset.yml -i inventory/hosts.ini.example
           ANSIBLE_LOCAL_TEMP=/tmp ANSIBLE_REMOTE_TEMP=/tmp ansible-playbook --syntax-check playbooks/validate.yml -i inventory/hosts.ini.example
+          cd ../istio-ab-testing
+          ANSIBLE_LOCAL_TEMP=/tmp ANSIBLE_REMOTE_TEMP=/tmp ansible-playbook --syntax-check playbooks/run_demo.yml -i inventory/hosts.ini.example
+          cd ../istio-rate-limit-demo
+          ANSIBLE_LOCAL_TEMP=/tmp ANSIBLE_REMOTE_TEMP=/tmp ansible-playbook --syntax-check site.yaml -i inventory/hosts.ini.example
+          ANSIBLE_LOCAL_TEMP=/tmp ANSIBLE_REMOTE_TEMP=/tmp ansible-playbook --syntax-check site-reset.yaml -i inventory/hosts.ini.example
+          ANSIBLE_LOCAL_TEMP=/tmp ANSIBLE_REMOTE_TEMP=/tmp ansible-playbook --syntax-check playbooks/istio/rate_limit_demo.yaml -i inventory/hosts.ini.example
 
-      - name: Check for unsafe public artifacts
+      - name: Run preflight path check
+        run: ./scripts/check-prereqs.sh
+
+      - name: Run public safety check
+        run: ./scripts/check-public-safety.sh
+
+      - name: Check git diff hygiene
         run: |
-          found="$(find . -path ./.git -prune -o \( \
-            -name '*.pcap' -o \
-            -name '*.pcapng' -o \
-            -name '*.kubeconfig' -o \
-            -name 'kubeconfig' -o \
-            -name 'vault.yaml' -o \
-            -name '*.vault-pass' -o \
-            -name '.DS_Store' -o \
-            -name '*.log' \
-          \) -print)"
-          if [ -n "$found" ]; then
-            echo "$found"
-            exit 1
-          fi
+          git diff --check
