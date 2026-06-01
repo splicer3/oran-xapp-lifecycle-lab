@@ -40,7 +40,7 @@ SCTP/E2 signaling is not natively visible to Istio/Envoy sidecars. Istio telemet
 | --- | --- |
 | OS assumptions | Controller: Linux or macOS with Python 3, SSH, and Ansible. Target: Ubuntu/Debian-compatible Linux for the main `ansible/ric-lifecycle` workflow. |
 | VM assumptions | Main path uses one reachable VM with a sudo-capable SSH user, outbound internet access, and enough CPU, memory, and disk for K3s, OSC Near-RT RIC, Istio, xApps, Docker containers, and downloaded charts/images. |
-| Required CLI tools | `ansible-playbook`, `ansible-galaxy`, `python3`, `ssh`; `kubectl` is useful for manual inspection. The playbooks use `k3s kubectl` on the target after K3s is installed. |
+| Required CLI tools | `ansible-playbook`, `ansible-galaxy`, `python3`, `ssh`; `make` is optional for wrapper targets, and `kubectl` is useful for manual inspection. The playbooks use `k3s kubectl` on the target after K3s is installed. |
 | Kubernetes/k3s assumptions | The main lifecycle playbook installs single-node K3s and disables Traefik. It does not assume an existing cluster. |
 | Ansible requirements | Main workflow: `ansible/ric-lifecycle/collections/requirements.yml`. Optional rate-limit demo: `ansible/istio-rate-limit-demo/collections/requirements.yaml`. |
 | Docker/container requirements | The main workflow installs Docker on the target VM. Docker is used for ChartMuseum containers and, in `fully-functional` mode, the `e2sim` container. |
@@ -51,11 +51,23 @@ Real inventories, kubeconfigs, private IPs, and credentials must stay outside th
 
 ## Quick Start
 
-There is no root Makefile or justfile. The runnable entry points are Ansible playbooks and Python scripts. Each command block below starts from the repository root.
+A small root Makefile exposes safe local checks. Deployment entry points remain the Ansible playbooks and Python scripts. Each command block below starts from the repository root.
 
 ### Local Sanity Checks
 
 These commands do not modify a VM. They were run as part of this public-release pass.
+
+```bash
+make check-prereqs
+make check-public-safety
+```
+
+The same checks can be run without `make`:
+
+```bash
+./scripts/check-prereqs.sh
+./scripts/check-public-safety.sh
+```
 
 ```bash
 cd ansible/ric-lifecycle
@@ -173,6 +185,8 @@ python3 scripts/plot_rate_limit.py \
 
 HTML rendering commands were not tested in this pass because Plotly was not installed locally. The GitHub Actions workflow in `.github/workflows/ci.yml` installs Plotly, compiles both plotting scripts, syntax-checks the main lifecycle playbooks, and blocks common unsafe artifacts.
 
+`scripts/check-public-safety.sh` is a lightweight repository scanner for obvious unsafe files and secret-like values. It does not replace a dedicated scanner; `gitleaks detect --source .` is a useful stronger check when `gitleaks` is installed.
+
 ## Expected Outputs
 
 The lifecycle validator is the first success signal. It checks required RIC namespaces, K3s without Traefik, Istio control-plane availability, sidecar injection, optional Istio addons, optional E2Term SCTP NodePort mapping, the `kpimon-go` xApp image, and e2sim container state in `fully-functional` mode.
@@ -212,6 +226,7 @@ For failures, start with `docs/troubleshooting.md`, then use `docs/e2sim-customi
 ├── AGENTS.md
 ├── CITATION.cff
 ├── LICENSE
+├── Makefile
 ├── SECURITY.md
 └── THIRD_PARTY.md
 ```
