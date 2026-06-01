@@ -8,6 +8,8 @@ This repository describes a single-VM O-RAN Near-RT RIC lab for xApp lifecycle a
 
 ## Three-Plane View
 
+The Mermaid diagram is an architecture sketch; rendering depends on the Markdown viewer.
+
 ```mermaid
 flowchart TB
     subgraph O["Orchestration Plane"]

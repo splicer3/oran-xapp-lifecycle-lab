@@ -10,9 +10,9 @@
 - `docs`: architecture, design decisions, observability notes, e2sim details, switching methodology, and troubleshooting guidance.
 - `experiments/time-based-switching`: the notebook used to analyze the A/B switching samples.
 - `results/sample`: small CSV and Markdown samples kept for script validation and artifact format reference.
-- `k8s`: pointers to Kubernetes and Istio manifests that are rendered by Ansible roles.
+- `k8s`: documents where Kubernetes and Istio manifests are rendered from Ansible role templates.
 
-This repository is not a thesis archive. Private inventories, kubeconfigs, packet captures, large generated logs, report PDFs, and personal material are intentionally excluded.
+This repository is not a thesis archive. It extracts the public engineering parts of the original thesis repository. Private inventories, kubeconfigs, packet captures, large generated logs, report PDFs, and personal material are intentionally excluded.
 
 ## Architecture Summary
 
@@ -198,7 +198,7 @@ Manual inspection commands below are for the target VM after deployment:
 | Pods ready | `k3s kubectl get pods -A` | RIC, Istio, and xApp pods are `Running` or `Succeeded`; validation fails if required namespace pods are unhealthy. |
 | Namespaces present | `k3s kubectl get ns ricplt ricinfra ricxapp istio-system` | Main RIC and Istio namespaces exist. |
 | RIC services present | `k3s kubectl -n ricplt get svc` and `k3s kubectl -n ricxapp get svc` | RIC platform services and xApp services are listed. |
-| xApp deployed | `k3s kubectl -n ricxapp get deploy | grep kpimon` | A `kpimon-go` deployment is present. |
+| xApp deployed | `k3s kubectl -n ricxapp get deploy \| grep kpimon` | A `kpimon-go` deployment is present. |
 | E2Sim traffic running | `docker ps --filter name=e2sim` and `docker logs e2sim --tail 50` | In `fully-functional` mode, the `e2sim` container is running. Logs should be reviewed for active connection/report output; validation checks container state, not full KPM semantics. |
 | Prometheus, Kiali, Grafana reachable | `k3s kubectl -n istio-system get deploy prometheus kiali grafana` | Addon deployments are available when `istio_install_addons=true`. See [docs/observability.md](docs/observability.md) for manual port-forward access. |
 

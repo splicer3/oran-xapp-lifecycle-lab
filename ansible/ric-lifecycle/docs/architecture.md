@@ -1,5 +1,7 @@
 # Architecture
 
+The Mermaid diagrams are architecture sketches; rendering depends on the Markdown viewer.
+
 ## Component View
 ```mermaid
 graph LR
