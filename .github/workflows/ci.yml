@@ -31,14 +31,13 @@ jobs:
           import sys
 
           root = Path.cwd()
-          ignored_dirs = {".git", ".codex-local"}
-          skipped_files = {"AGENTS.override.md"}
+          ignored_dirs = {".git", ".local-private"}
           link_re = re.compile(r'!?\[[^\]]*\]\(([^)]+)\)')
           failures = []
 
           for path in sorted(root.rglob("*.md")):
               rel_parts = set(path.relative_to(root).parts)
-              if rel_parts & ignored_dirs or path.name in skipped_files:
+              if rel_parts & ignored_dirs or any(part.startswith("_") for part in rel_parts):
                   continue
               text = path.read_text(encoding="utf-8")
               for match in link_re.finditer(text):

@@ -161,4 +161,4 @@ The thesis work describes an E2Sim fork that added continuous dataset looping an
 - e2sim is not a full physical RAN, and it does not model RF behavior, UE mobility, scheduler behavior, or complete gNB/core-network interactions.
 - SCTP/E2 visibility is limited. Istio can help observe RMR/TCP traffic around xApps, but it does not expose E2AP/E2SM-KPM SCTP payloads.
 - Version compatibility matters. RIC release, E2AP version, E2SM-KPM encoding, `kpimon-go`, and the selected e2sim image must line up.
-- The default `splicer3/e2sim:latest` tag is mutable. Pin it for repeatable work and review image provenance before publishing derived results.
+- The default `splicer3/e2sim:latest` tag is mutable. Pin it for repeatable work and review image provenance before sharing derived results.

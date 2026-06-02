@@ -54,8 +54,8 @@ report_failures() {
 
 scan_files="$TMP_BASE/files"
 find "$REPO_ROOT" \
-  \( -path "$REPO_ROOT/.git" -o -path "$REPO_ROOT/.codex-local" \) -prune -o \
-  -type f ! -path "$REPO_ROOT/AGENTS.override.md" -print > "$scan_files"
+  \( -name .git -o -name '_*' -o -name .local-private \) -prune -o \
+  -type f -print > "$scan_files"
 
 secret_names="$TMP_BASE/secret-names"
 private_key_names="$TMP_BASE/private-key-names"

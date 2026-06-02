@@ -1,13 +1,13 @@
 # oran-xapp-lifecycle-lab
 
-`oran-xapp-lifecycle-lab` is an O-RAN Near-RT RIC xApp lifecycle testbed. It uses Ansible to build a single-VM K3s lab, deploy the O-RAN Software Community Near-RT RIC, install `kpimon-go`, run e2sim E2SM-KPM input, and evaluate xApp traffic switching with Istio, Prometheus, Grafana, and Kiali.
+`oran-xapp-lifecycle-lab` is a research and portfolio O-RAN Near-RT RIC xApp lifecycle testbed. It uses Ansible to build a single-VM K3s lab, deploy the O-RAN Software Community Near-RT RIC, install `kpimon-go`, run e2sim E2SM-KPM input, and evaluate xApp traffic switching with Istio, Prometheus, Grafana, and Kiali. It is not production RAN infrastructure.
 
 ## What This Repository Contains
 
 - `ansible/ric-lifecycle`: the main Infrastructure as Code workflow for K3s, Docker, Istio, OSC Near-RT RIC, optional E2Term exposure, e2sim, KPI MON xApp onboarding, and validation.
 - `ansible/istio-ab-testing`: the Time-Based Switching experiment for `kpimon-go` A/B traffic testing with Istio TCP routing and Prometheus metrics collection.
 - `ansible/istio-rate-limit-demo`: an optional K3s/NGINX/Istio demo used to exercise local rate limiting and observability mechanics.
-- `docs`: architecture, design decisions, observability notes, e2sim details, switching methodology, and troubleshooting guidance.
+- `docs`: architecture, design decisions, observability notes, e2sim details, switching methodology, troubleshooting guidance, and public release curation notes.
 - `experiments/time-based-switching`: the notebook used to analyze the A/B switching samples.
 - `results/sample`: small CSV and Markdown samples kept for script validation and artifact format reference.
 - `k8s`: documents where Kubernetes and Istio manifests are rendered from Ansible role templates.
@@ -228,7 +228,6 @@ For failures, start with [docs/troubleshooting.md](docs/troubleshooting.md), the
 ├── results/
 │   └── sample/
 ├── scripts/
-├── AGENTS.md
 ├── CITATION.cff
 ├── LICENSE
 ├── LICENSE_DECISION.md
@@ -237,7 +236,7 @@ For failures, start with [docs/troubleshooting.md](docs/troubleshooting.md), the
 └── THIRD_PARTY.md
 ```
 
-See [docs/architecture.md](docs/architecture.md), [docs/design-decisions.md](docs/design-decisions.md), [docs/observability.md](docs/observability.md), [docs/e2sim-customization.md](docs/e2sim-customization.md), and [docs/time-based-switching.md](docs/time-based-switching.md) for focused notes.
+See [docs/architecture.md](docs/architecture.md), [docs/design-decisions.md](docs/design-decisions.md), [docs/observability.md](docs/observability.md), [docs/e2sim-customization.md](docs/e2sim-customization.md), [docs/time-based-switching.md](docs/time-based-switching.md), and [docs/public-release-notes.md](docs/public-release-notes.md) for focused notes.
 
 ## Known Limitations
 

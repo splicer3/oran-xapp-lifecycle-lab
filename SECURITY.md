@@ -29,7 +29,7 @@ Do not commit:
 
 Use the committed `*.example` inventory files as templates and keep real lab values under `/tmp` or another local-only path.
 
-Run the lightweight public-safety check before publishing changes:
+Run the lightweight public-safety check before sharing changes publicly:
 
 ```bash
 make check-public-safety

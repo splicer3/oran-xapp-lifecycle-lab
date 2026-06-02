@@ -22,6 +22,11 @@ tmp/
 output/
 *.log
 
+# Private local notes and reports
+_*/
+.local-private/
+LOCAL.override.md
+
 # Secrets and local cluster access
 .env
 .env.*
