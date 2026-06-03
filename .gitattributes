@@ -9,6 +9,11 @@
 *.yml  text eol=lf diff=yaml
 *.yaml text eol=lf diff=yaml
 
+# GitHub Linguist: classify Ansible-owned YAML as Ansible without
+# reclassifying GitHub Actions or Kubernetes/Istio Jinja templates.
+ansible/**/*.yml  linguist-language=Ansible
+ansible/**/*.yaml linguist-language=Ansible
+
 # ------------------------
 # Markdown / Docs
 # ------------------------
